@@ -1,1 +1,3 @@
-target
+/target
+*.wisp-part
+test-*.bin

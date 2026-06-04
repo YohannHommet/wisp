@@ -15,9 +15,7 @@ use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn::{ClientConfig, ServerConfig, TransportConfig};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::CryptoProvider;
-use rustls::pki_types::{
-    CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime,
-};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 
 use crate::PROTOCOL;
@@ -57,7 +55,10 @@ pub fn make_server_config() -> Result<ServerSetup> {
     transport.max_concurrent_uni_streams(0u8.into());
     config.transport_config(Arc::new(transport));
 
-    Ok(ServerSetup { config, fingerprint })
+    Ok(ServerSetup {
+        config,
+        fingerprint,
+    })
 }
 
 /// Build a QUIC client config that pins the sender's certificate fingerprint.

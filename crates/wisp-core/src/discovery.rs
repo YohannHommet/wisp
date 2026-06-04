@@ -66,7 +66,7 @@ pub fn advertise(
         ("hash", hash),
         ("fp", fingerprint_hex),
     ];
-    let info = ServiceInfo::new(SERVICE_TYPE, code, &host, ip, port, &props[..])
+    let info = ServiceInfo::new(SERVICE_TYPE, code, &host, IpAddr::V4(ip), port, &props[..])
         .context("building mDNS service info")?;
     let fullname = info.get_fullname().to_string();
     daemon.register(info).context("registering mDNS service")?;
@@ -76,7 +76,9 @@ pub fn advertise(
 /// Browse the LAN for `code` until found or `timeout` elapses.
 pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
     let daemon = ServiceDaemon::new().context("starting mDNS daemon")?;
-    let receiver = daemon.browse(SERVICE_TYPE).context("starting mDNS browse")?;
+    let receiver = daemon
+        .browse(SERVICE_TYPE)
+        .context("starting mDNS browse")?;
     let deadline = Instant::now() + timeout;
 
     loop {
@@ -89,14 +91,10 @@ pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
                 if info.get_property_val_str("code") != Some(code) {
                     continue;
                 }
-                let Some(addr) = info
-                    .get_addresses()
-                    .iter()
-                    .find_map(|a| match a {
-                        IpAddr::V4(v4) => Some(*v4),
-                        IpAddr::V6(_) => None,
-                    })
-                else {
+                let Some(addr) = info.get_addresses().iter().find_map(|a| match a {
+                    IpAddr::V4(v4) => Some(*v4),
+                    IpAddr::V6(_) => None,
+                }) else {
                     continue;
                 };
                 let meta = parse_meta(&info)?;

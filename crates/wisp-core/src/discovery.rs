@@ -1,11 +1,16 @@
 //! LAN discovery via mDNS (`_wisp._udp.local.`).
 //!
-//! The sender advertises a service whose instance name is the pairing code,
-//! carrying the file metadata and the certificate fingerprint in TXT records.
-//! The receiver browses for the matching code and resolves the address/port.
+//! Phase 2 change: instead of advertising the pairing code in cleartext, we
+//! advertise a 16-byte BLAKE3 commitment (`ch`). A passive LAN observer cannot
+//! extract the code from the advertisement; only the receiver, who already
+//! knows the code, can compute the same commitment and match it.
 //!
-//! Note (Phase 1): metadata here is in cleartext on the LAN. Phase 2 moves all
-//! metadata inside the PAKE-authenticated, encrypted channel.
+//! TXT records advertised:
+//!   `ch`  — hex(BLAKE3(code)[..16])  code commitment (32 hex chars)
+//!   `fp`  — hex(cert fingerprint)    BLAKE3 hash of the DER certificate
+//!
+//! File metadata (name, size, hash) is no longer in mDNS; it is sent inside
+//! the PAKE-authenticated, TLS-encrypted QUIC stream (see `transfer.rs`).
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
@@ -15,21 +20,12 @@ use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 
 pub const SERVICE_TYPE: &str = "_wisp._udp.local.";
 
-/// Metadata advertised about a transfer.
-#[derive(Debug, Clone)]
-pub struct TransferMeta {
-    pub name: String,
-    pub size: u64,
-    pub hash: String,
-    pub fingerprint: [u8; 32],
-}
-
-/// Resolved sender endpoint plus advertised metadata.
+/// Resolved sender endpoint.
 #[derive(Debug, Clone)]
 pub struct Resolved {
     pub addr: Ipv4Addr,
     pub port: u16,
-    pub meta: TransferMeta,
+    pub fingerprint: [u8; 32],
 }
 
 /// Active advertisement; unregisters on drop.
@@ -45,27 +41,12 @@ impl Drop for Advert {
     }
 }
 
-/// Advertise a transfer on the LAN under `code`.
-#[allow(clippy::too_many_arguments)]
-pub fn advertise(
-    code: &str,
-    ip: Ipv4Addr,
-    port: u16,
-    name: &str,
-    size: u64,
-    hash: &str,
-    fingerprint_hex: &str,
-) -> Result<Advert> {
+/// Advertise a transfer on the LAN under `code` (commitment only).
+pub fn advertise(code: &str, ip: Ipv4Addr, port: u16, fingerprint_hex: &str) -> Result<Advert> {
+    let ch = code_commitment(code);
     let daemon = ServiceDaemon::new().context("starting mDNS daemon")?;
     let host = format!("wisp-{port}.local.");
-    let size_s = size.to_string();
-    let props: [(&str, &str); 5] = [
-        ("code", code),
-        ("name", name),
-        ("size", &size_s),
-        ("hash", hash),
-        ("fp", fingerprint_hex),
-    ];
+    let props: [(&str, &str); 2] = [("ch", &ch), ("fp", fingerprint_hex)];
     let info = ServiceInfo::new(SERVICE_TYPE, code, &host, IpAddr::V4(ip), port, &props[..])
         .context("building mDNS service info")?;
     let fullname = info.get_fullname().to_string();
@@ -73,8 +54,9 @@ pub fn advertise(
     Ok(Advert { daemon, fullname })
 }
 
-/// Browse the LAN for `code` until found or `timeout` elapses.
+/// Browse the LAN for `code` (matched via its commitment) until found or timeout.
 pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
+    let ch_expected = code_commitment(code);
     let daemon = ServiceDaemon::new().context("starting mDNS daemon")?;
     let receiver = daemon
         .browse(SERVICE_TYPE)
@@ -88,7 +70,7 @@ pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
 
         match receiver.recv_timeout(remaining) {
             Ok(ServiceEvent::ServiceResolved(info)) => {
-                if info.get_property_val_str("code") != Some(code) {
+                if info.get_property_val_str("ch") != Some(ch_expected.as_str()) {
                     continue;
                 }
                 let Some(addr) = info.get_addresses().iter().find_map(|a| match a {
@@ -97,10 +79,14 @@ pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
                 }) else {
                     continue;
                 };
-                let meta = parse_meta(&info)?;
+                let fingerprint = parse_fingerprint(&info)?;
                 let port = info.get_port();
                 let _ = daemon.shutdown();
-                return Ok(Resolved { addr, port, meta });
+                return Ok(Resolved {
+                    addr,
+                    port,
+                    fingerprint,
+                });
             }
             Ok(_) => continue,
             Err(_) => {
@@ -112,26 +98,16 @@ pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
     }
 }
 
-fn parse_meta(info: &ServiceInfo) -> Result<TransferMeta> {
-    let name = info
-        .get_property_val_str("name")
-        .unwrap_or("file")
-        .to_string();
-    let size = info
-        .get_property_val_str("size")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let hash = info.get_property_val_str("hash").unwrap_or("").to_string();
+/// BLAKE3(code)[..16] encoded as hex — 32-char string.
+fn code_commitment(code: &str) -> String {
+    hex::encode(&blake3::hash(code.as_bytes()).as_bytes()[..16])
+}
+
+fn parse_fingerprint(info: &ServiceInfo) -> Result<[u8; 32]> {
     let fp_hex = info.get_property_val_str("fp").unwrap_or("");
     let fp_vec = hex::decode(fp_hex).context("decoding certificate fingerprint")?;
-    let fingerprint: [u8; 32] = fp_vec
+    fp_vec
         .as_slice()
         .try_into()
-        .map_err(|_| anyhow!("advertised fingerprint has wrong length"))?;
-    Ok(TransferMeta {
-        name,
-        size,
-        hash,
-        fingerprint,
-    })
+        .map_err(|_| anyhow!("advertised fingerprint has wrong length"))
 }

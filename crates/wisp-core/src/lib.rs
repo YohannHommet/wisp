@@ -1,12 +1,14 @@
 //! Wisp core protocol.
 //!
-//! Phase 1 (LAN): mDNS discovery + QUIC (TLS 1.3) transport with certificate
-//! fingerprint pinning + BLAKE3 verify-before-rename integrity.
+//! Phase 2 (LAN, PAKE-authenticated): mDNS discovery with code commitment +
+//! SPAKE2 mutual authentication + QUIC (TLS 1.3) with fingerprint pinning +
+//! BLAKE3 verify-before-rename. File metadata is inside the encrypted channel.
 //!
 //! See `docs/THREAT_MODEL.md` for the exact security guarantees of this phase.
 
 pub mod code;
 pub mod discovery;
+pub mod pake;
 pub mod transfer;
 pub mod transport;
 

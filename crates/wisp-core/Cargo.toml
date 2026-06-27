@@ -22,4 +22,5 @@ indicatif = { workspace = true }
 local-ip-address = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
+spake2 = { workspace = true }
 tracing = { workspace = true }

@@ -7,7 +7,7 @@ End-to-end encrypted · integrity-verified · zero trust, zero servers.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.82+-orange.svg)](https://www.rust-lang.org)
-[![Status](https://img.shields.io/badge/status-Phase%201%20(LAN)-yellow.svg)](docs/THREAT_MODEL.md)
+[![Status](https://img.shields.io/badge/status-Phase%202%20(PAKE%2BLAN)-brightgreen.svg)](docs/THREAT_MODEL.md)
 
 </div>
 
@@ -77,11 +77,14 @@ wisp recv 7-tiger-saturn
 
 ## Security status — read this
 
-Wisp is built in honest phases. **Phase 1 (current)** protects content against a
-*passive* eavesdropper on the LAN (QUIC/TLS 1.3) and guarantees integrity
-(BLAKE3 verify-before-rename), but it does **not** yet defend against an
-*active* on-LAN attacker spoofing mDNS, and metadata (filename, size) is
-advertised in cleartext.
+Wisp is built in honest phases. **Phase 2 (current)** ships mutual
+authentication via **SPAKE2** (RFC 9382): the pairing code becomes a PAKE
+password — both sides prove they know it before a byte of file data is
+exchanged. An active mDNS spoofer who does not know the code will fail the
+handshake. File metadata (filename, size) is no longer in mDNS; it lives
+exclusively inside the TLS-encrypted, PAKE-authenticated stream. The only
+cleartext on the LAN is a 16-byte BLAKE3 commitment of the code and the
+TLS fingerprint.
 
 👉 The full, phase-by-phase security contract lives in
 **[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)**. We never claim a property we
@@ -92,7 +95,7 @@ have not shipped.
 | Phase | Theme | Highlights |
 | --- | --- | --- |
 | **1** ✅ | LAN, verified | mDNS discovery · QUIC/TLS · BLAKE3 verify-before-rename |
-| **2** | Authenticated channel | CPace PAKE · channel binding · encrypted metadata |
+| **2** ✅ | Authenticated channel | SPAKE2 (RFC 9382) · code commitment in mDNS · encrypted metadata |
 | **3** | WAN | DHT rendezvous · NAT hole-punching · **blind relay** |
 | **4** | Speed & assurance | multipath bonding · FEC · fuzzing · formal proof · audit |
 
@@ -104,10 +107,11 @@ See **[docs/BRANDING.md](docs/BRANDING.md)** for the brand book and
 ```
 crates/
   wisp-core/      the protocol library
-    code.rs       short pairing codes (future PAKE password)
-    discovery.rs  mDNS advertise / find
+    code.rs       short pairing codes (PAKE password)
+    pake.rs       SPAKE2 mutual authentication (RFC 9382)
+    discovery.rs  mDNS advertise / find (code commitment, no metadata)
     transport.rs  QUIC + self-signed cert + fingerprint pinning
-    transfer.rs   WSP/1 wire protocol + verified streaming
+    transfer.rs   WSP/1 wire protocol + PAKE handshake + verified streaming
   wisp-cli/       the `wisp` binary (clap)
 ```
 

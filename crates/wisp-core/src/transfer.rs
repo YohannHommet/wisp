@@ -1,12 +1,20 @@
-//! The Wisp transfer protocol (WSP/1), Phase 1.
+//! The Wisp transfer protocol (WSP/1), Phase 2.
 //!
 //! Wire format over a single QUIC bidirectional stream:
-//!   receiver -> sender : "GET" then stream finish
-//!   sender   -> receiver : [u32 BE meta_len][meta_json][raw file bytes]
 //!
-//! Integrity: the receiver streams into a `.wisp-part` file, hashes with BLAKE3
-//! incrementally, and renames to the final name *only* after the hash matches.
-//! A mismatch deletes the partial file — no unverified byte is ever exposed.
+//!   [SPAKE2 + confirmation handshake — see pake.rs]
+//!   receiver → sender : "GET"  then stream finish
+//!   sender   → receiver : [u32 BE meta_len][meta_json][raw file bytes]
+//!
+//! The PAKE handshake runs before any file data, proving mutual knowledge of
+//! the pairing code. File metadata (name, size, BLAKE3 hash) is never sent
+//! over mDNS; it travels exclusively inside the TLS-encrypted, PAKE-
+//! authenticated stream.
+//!
+//! Integrity: the receiver streams into a `.wisp-part` file, hashes with
+//! BLAKE3 incrementally, and renames to the final name *only* after the hash
+//! matches. A mismatch deletes the partial file — no unverified byte is ever
+//! exposed under the final filename.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -19,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::{discovery, transport};
+use crate::{discovery, pake, transport};
 
 const CHUNK: usize = 64 * 1024;
 const MAX_META: usize = 64 * 1024;
@@ -32,8 +40,8 @@ struct FileMeta {
     hash: String,
 }
 
-/// Send a file: advertise it on the LAN and serve it to the first receiver
-/// that connects with the right code.
+/// Send a file: advertise it on the LAN (commitment only) and serve it to the
+/// first receiver that passes the PAKE handshake.
 pub async fn send_file(path: PathBuf, display_name: Option<String>) -> Result<()> {
     if !path.is_file() {
         return Err(anyhow!("not a regular file: {}", path.display()));
@@ -60,7 +68,9 @@ pub async fn send_file(path: PathBuf, display_name: Option<String>) -> Result<()
     let ip = local_ipv4()?;
     let code = crate::code::generate();
     let fp_hex = hex::encode(fingerprint);
-    let _advert = discovery::advertise(&code, ip, port, &name, size, &hash, &fp_hex)?;
+
+    // Phase 2: advertise only the code commitment + fingerprint (no file metadata).
+    let _advert = discovery::advertise(&code, ip, port, &fp_hex)?;
 
     print_send_banner(&code, &name, size, ip, port, &hash);
 
@@ -72,7 +82,14 @@ pub async fn send_file(path: PathBuf, display_name: Option<String>) -> Result<()
     eprintln!("  ↘ peer connected from {}", conn.remote_address());
 
     let (mut send, mut recv) = conn.accept_bi().await.context("accepting stream")?;
-    let _ = recv.read_to_end(16).await; // small "GET" request frame
+
+    // Phase 2: PAKE handshake before any file data.
+    pake::sender_handshake(&code, &mut send, &mut recv)
+        .await
+        .context("PAKE handshake failed")?;
+
+    // Read the receiver's "GET" request.
+    let _ = recv.read_to_end(16).await;
 
     let meta = FileMeta {
         name: name.clone(),
@@ -99,7 +116,6 @@ pub async fn send_file(path: PathBuf, display_name: Option<String>) -> Result<()
     send.finish().context("finishing stream")?;
     pb.finish_and_clear();
 
-    // Wait for the receiver to acknowledge by closing the connection.
     conn.closed().await;
     println!("  ✓ delivered {name} ({}) — wisp gone.", human(size));
     Ok(())
@@ -119,7 +135,7 @@ pub async fn receive_file(code: String, dir: PathBuf) -> Result<()> {
     .await
     .context("discovery task")??;
 
-    let client_config = transport::make_client_config(resolved.meta.fingerprint)?;
+    let client_config = transport::make_client_config(resolved.fingerprint)?;
     let mut endpoint = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))
         .context("starting QUIC client")?;
     endpoint.set_default_client_config(client_config);
@@ -132,10 +148,16 @@ pub async fn receive_file(code: String, dir: PathBuf) -> Result<()> {
         .context("connecting to sender (fingerprint pinned)")?;
 
     let (mut send, mut recv) = conn.open_bi().await.context("opening stream")?;
+
+    // Phase 2: PAKE handshake before sending "GET".
+    pake::receiver_handshake(&code, &mut send, &mut recv)
+        .await
+        .context("PAKE handshake failed")?;
+
     send.write_all(b"GET").await?;
     send.finish().context("finishing request")?;
 
-    // Read the metadata frame.
+    // Read the metadata frame (name, size, hash) — now exclusively on-wire.
     let mut len_buf = [0u8; 4];
     recv.read_exact(&mut len_buf)
         .await

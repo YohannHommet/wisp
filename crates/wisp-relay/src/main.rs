@@ -19,6 +19,7 @@ use axum::http::StatusCode;
 use axum::{routing::get, Json, Router};
 use dashmap::DashMap;
 use serde_json::{json, Value};
+use tokio::sync::Notify;
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -28,7 +29,21 @@ struct Entry {
     expires: Instant,
 }
 
-type Store = Arc<DashMap<String, Entry>>;
+/// Shared relay state.
+///
+/// `store`   — settled sender entries keyed by `ch`.
+/// `waiters` — per-ch Notify handles: a receiver that arrives before the
+///             sender parks here; handle_pub calls notify_waiters() on insert.
+struct AppState {
+    store:   DashMap<String, Entry>,
+    waiters: DashMap<String, Arc<Notify>>,
+}
+
+type Store = Arc<AppState>;
+
+fn valid_hex(s: &str, expected_len: usize) -> bool {
+    s.len() == expected_len && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -44,15 +59,18 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(7777);
 
-    let store: Store = Arc::new(DashMap::new());
+    let state: Store = Arc::new(AppState {
+        store:   DashMap::new(),
+        waiters: DashMap::new(),
+    });
 
     // Purge expired entries every 15s.
     tokio::spawn({
-        let store = store.clone();
+        let state = state.clone();
         async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(15)).await;
-                store.retain(|_, v| v.expires > Instant::now());
+                state.store.retain(|_, v| v.expires > Instant::now());
             }
         }
     });
@@ -60,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/pub/:ch/:fp/:port", get(handle_pub))
         .route("/sub/:ch", get(handle_sub))
-        .with_state(store);
+        .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("wisp-relay listening on {addr}");
@@ -77,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
 /// Sender announces itself. The relay records the *observed* public IP.
 async fn handle_pub(
     Path((ch, fp, port_str)): Path<(String, String, String)>,
-    State(store): State<Store>,
+    State(state): State<Store>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> (StatusCode, Json<Value>) {
     let port: u16 = match port_str.parse() {
@@ -89,6 +107,18 @@ async fn handle_pub(
             )
         }
     };
+    if port == 0 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "invalid port"})),
+        );
+    }
+    if !valid_hex(&ch, 32) || !valid_hex(&fp, 64) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "ch must be 32 hex chars, fp must be 64 hex chars"})),
+        );
+    }
     let ip = match addr.ip() {
         IpAddr::V4(v4) => v4.to_string(),
         IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
@@ -101,9 +131,9 @@ async fn handle_pub(
             }
         },
     };
-    tracing::info!(ch = %&ch[..8], %ip, port, "sender announced");
-    store.insert(
-        ch,
+    tracing::info!(ch = %ch.get(..8).unwrap_or(&ch), %ip, port, "sender announced");
+    state.store.insert(
+        ch.clone(),
         Entry {
             ip: ip.clone(),
             port,
@@ -111,17 +141,31 @@ async fn handle_pub(
             expires: Instant::now() + Duration::from_secs(60),
         },
     );
+    // Wake any receiver that arrived before us.
+    if let Some(n) = state.waiters.get(&ch) {
+        n.notify_waiters();
+    }
     (StatusCode::OK, Json(json!({"observed_ip": ip})))
 }
 
 /// Receiver queries. Waits up to 30s for the sender to announce.
+///
+/// Parks on a `Notify` handle instead of polling every 500ms, so idle
+/// receivers consume no CPU and wake immediately when the sender arrives.
 async fn handle_sub(
     Path(ch): Path<String>,
-    State(store): State<Store>,
+    State(state): State<Store>,
 ) -> (StatusCode, Json<Value>) {
+    // Get-or-create the Notify for this ch so handle_pub can wake us.
+    let notify = state
+        .waiters
+        .entry(ch.clone())
+        .or_insert_with(|| Arc::new(Notify::new()))
+        .clone();
+
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        let found = store.get(&ch).and_then(|e| {
+        let found = state.store.get(&ch).and_then(|e| {
             if e.expires > Instant::now() {
                 Some((e.ip.clone(), e.port, e.fp.clone()))
             } else {
@@ -129,18 +173,51 @@ async fn handle_sub(
             }
         });
         if let Some((ip, port, fp)) = found {
-            tracing::info!(ch = %&ch[..8], %ip, port, "receiver found sender");
+            state.waiters.remove(&ch);
+            tracing::info!(ch = %ch.get(..8).unwrap_or(&ch), %ip, port, "receiver found sender");
             return (
                 StatusCode::OK,
                 Json(json!({"ip": ip, "port": port, "fp": fp})),
             );
         }
-        if Instant::now() >= deadline {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "no sender found within timeout"})),
-            );
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Park until the sender notifies us or the timeout fires.
+        let _ = tokio::time::timeout(remaining, notify.notified()).await;
+    }
+
+    state.waiters.remove(&ch);
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({"error": "no sender found within timeout"})),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_hex_accepts_correct_lengths() {
+        let ch = "a".repeat(32);
+        let fp = "f".repeat(64);
+        assert!(valid_hex(&ch, 32));
+        assert!(valid_hex(&fp, 64));
+    }
+
+    #[test]
+    fn valid_hex_rejects_wrong_length() {
+        assert!(!valid_hex(&"a".repeat(31), 32));
+        assert!(!valid_hex(&"a".repeat(33), 32));
+        assert!(!valid_hex(&"f".repeat(63), 64));
+    }
+
+    #[test]
+    fn valid_hex_rejects_non_hex_chars() {
+        assert!(!valid_hex(&"g".repeat(32), 32));
+        assert!(!valid_hex(&"z".repeat(64), 64));
+        assert!(!valid_hex(&" ".repeat(32), 32));
     }
 }

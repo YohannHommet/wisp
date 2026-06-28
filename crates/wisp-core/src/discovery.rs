@@ -79,7 +79,13 @@ pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
                 }) else {
                     continue;
                 };
-                let fingerprint = parse_fingerprint(&info)?;
+                let fingerprint = match parse_fingerprint(&info) {
+                    Ok(fp) => fp,
+                    Err(e) => {
+                        tracing::warn!("skipping mDNS record with invalid fingerprint: {e}");
+                        continue;
+                    }
+                };
                 let port = info.get_port();
                 let _ = daemon.shutdown();
                 return Ok(Resolved {
@@ -105,4 +111,50 @@ fn parse_fingerprint(info: &ServiceInfo) -> Result<[u8; 32]> {
         .as_slice()
         .try_into()
         .map_err(|_| anyhow!("advertised fingerprint has wrong length"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fake_info_with_fp(fp: &str) -> ServiceInfo {
+        ServiceInfo::new(
+            SERVICE_TYPE,
+            "test",
+            "wisp-test.local.",
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            1234,
+            &[("ch", "aabbcc"), ("fp", fp)][..],
+        )
+        .expect("valid ServiceInfo")
+    }
+
+    #[test]
+    fn parse_fingerprint_valid() {
+        let fp = "a".repeat(64);
+        let info = fake_info_with_fp(&fp);
+        let result = parse_fingerprint(&info);
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        assert_eq!(result.unwrap().len(), 32);
+    }
+
+    #[test]
+    fn parse_fingerprint_wrong_length() {
+        let fp = "a".repeat(60);
+        let info = fake_info_with_fp(&fp);
+        assert!(parse_fingerprint(&info).is_err());
+    }
+
+    #[test]
+    fn parse_fingerprint_invalid_hex() {
+        let fp = "z".repeat(64);
+        let info = fake_info_with_fp(&fp);
+        assert!(parse_fingerprint(&info).is_err());
+    }
+
+    #[test]
+    fn parse_fingerprint_empty() {
+        let info = fake_info_with_fp("");
+        assert!(parse_fingerprint(&info).is_err());
+    }
 }

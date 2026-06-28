@@ -97,7 +97,7 @@ pub async fn send_file(
         .await
         .context("PAKE handshake failed")?;
 
-    let _ = recv.read_to_end(16).await;
+    recv.read_to_end(16).await.context("waiting for GET from receiver")?;
 
     let meta = FileMeta {
         name: name.clone(),

@@ -73,7 +73,7 @@ async fn http_get(host: &str, path: &str) -> Result<String> {
     stream.write_all(req.as_bytes()).await?;
 
     let mut buf = Vec::new();
-    tokio::time::timeout(RELAY_TIMEOUT, stream.read_to_end(&mut buf))
+    tokio::time::timeout(RELAY_TIMEOUT, stream.take(64 * 1024).read_to_end(&mut buf))
         .await
         .context("relay response timed out")??;
 
@@ -89,7 +89,7 @@ async fn http_get(host: &str, path: &str) -> Result<String> {
         .trim()
         .to_string();
 
-    if !status_line.contains("200") {
+    if status_line.split_whitespace().nth(1) != Some("200") {
         let err_msg = serde_json::from_str::<serde_json::Value>(&body)
             .ok()
             .and_then(|v| v["error"].as_str().map(String::from))
@@ -101,8 +101,40 @@ async fn http_get(host: &str, path: &str) -> Result<String> {
 }
 
 /// Strip `http://` / `https://` scheme from a URL to get `host:port`.
+/// Any path after the host is dropped so `TcpStream::connect` gets a bare `host:port`.
 pub fn strip_scheme(url: &str) -> &str {
-    url.trim_start_matches("https://")
-        .trim_start_matches("http://")
-        .trim_end_matches('/')
+    let without_scheme = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    without_scheme.split('/').next().unwrap_or(without_scheme)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_scheme_http() {
+        assert_eq!(strip_scheme("http://relay.example.com:7777"), "relay.example.com:7777");
+    }
+
+    #[test]
+    fn strip_scheme_https() {
+        assert_eq!(strip_scheme("https://relay.example.com:7777"), "relay.example.com:7777");
+    }
+
+    #[test]
+    fn strip_scheme_with_path() {
+        assert_eq!(strip_scheme("http://relay.example.com:7777/api/v1"), "relay.example.com:7777");
+    }
+
+    #[test]
+    fn strip_scheme_no_scheme() {
+        assert_eq!(strip_scheme("relay.example.com:7777"), "relay.example.com:7777");
+    }
+
+    #[test]
+    fn strip_scheme_trailing_slash() {
+        assert_eq!(strip_scheme("http://relay.example.com:7777/"), "relay.example.com:7777");
+    }
 }

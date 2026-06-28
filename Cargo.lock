@@ -2035,6 +2035,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spake2",
+ "subtle",
  "tokio",
  "tracing",
 ]

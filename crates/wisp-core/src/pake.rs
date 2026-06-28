@@ -17,6 +17,7 @@
 use anyhow::{anyhow, Result};
 use quinn::{RecvStream, SendStream};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
+use subtle::ConstantTimeEq;
 
 const ID_SENDER: &[u8] = b"wisp-sender";
 const ID_RECEIVER: &[u8] = b"wisp-receiver";
@@ -46,7 +47,7 @@ pub async fn sender_handshake(
 
     let mut got_b = [0u8; 32];
     recv.read_exact(&mut got_b).await?;
-    if got_b != mac(&key, b"wisp:confirm:b") {
+    if got_b.ct_eq(&mac(&key, b"wisp:confirm:b")).unwrap_u8() == 0 {
         return Err(anyhow!(
             "authentication failed — wrong code or active network attack"
         ));
@@ -78,7 +79,7 @@ pub async fn receiver_handshake(
     // Verify sender's confirmation, then send ours.
     let mut got_a = [0u8; 32];
     recv.read_exact(&mut got_a).await?;
-    if got_a != mac(&key, b"wisp:confirm:a") {
+    if got_a.ct_eq(&mac(&key, b"wisp:confirm:a")).unwrap_u8() == 0 {
         return Err(anyhow!(
             "authentication failed — wrong code or active network attack"
         ));
@@ -90,11 +91,10 @@ pub async fn receiver_handshake(
 }
 
 fn mac(key: &[u8], label: &[u8]) -> [u8; 32] {
-    *blake3::Hasher::new()
-        .update(key)
-        .update(label)
-        .finalize()
-        .as_bytes()
+    let k: &[u8; 32] = key[..32]
+        .try_into()
+        .expect("SPAKE2/Ed25519 key is always 64 bytes");
+    *blake3::keyed_hash(k, label).as_bytes()
 }
 
 async fn write_frame(send: &mut SendStream, msg: &[u8]) -> Result<()> {
@@ -114,4 +114,41 @@ async fn read_frame(recv: &mut RecvStream) -> Result<Vec<u8>> {
     let mut buf = vec![0u8; len];
     recv.read_exact(&mut buf).await?;
     Ok(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mac_is_deterministic_and_32_bytes() {
+        let key = [0xabu8; 64];
+        let out = mac(&key, b"wisp:confirm:a");
+        assert_eq!(out.len(), 32);
+        assert_eq!(out, mac(&key, b"wisp:confirm:a"));
+    }
+
+    #[test]
+    fn mac_differs_by_label() {
+        let key = [0x01u8; 64];
+        assert_ne!(mac(&key, b"wisp:confirm:a"), mac(&key, b"wisp:confirm:b"));
+    }
+
+    #[test]
+    fn mac_differs_by_key() {
+        let key_a = [0x01u8; 64];
+        let key_b = [0x02u8; 64];
+        assert_ne!(mac(&key_a, b"wisp:confirm:a"), mac(&key_b, b"wisp:confirm:a"));
+    }
+
+    #[test]
+    fn ct_eq_correct_vs_wrong() {
+        let key = [0xffu8; 64];
+        let label = b"wisp:confirm:a";
+        let correct = mac(&key, label);
+        let mut wrong = correct;
+        wrong[0] ^= 1;
+        assert_eq!(correct.ct_eq(&correct).unwrap_u8(), 1);
+        assert_eq!(correct.ct_eq(&wrong).unwrap_u8(), 0);
+    }
 }

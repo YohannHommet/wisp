@@ -9,8 +9,8 @@
 //!
 //!   B→A : [u8 len][msg bytes]       SPAKE2-B outbound message (~33 B)
 //!   A→B : [u8 len][msg bytes]       SPAKE2-A outbound message (~33 B)
-//!   A→B : [32 bytes]                confirm_a = BLAKE3(key || "wisp:confirm:a")
-//!   B→A : [32 bytes]                confirm_b = BLAKE3(key || "wisp:confirm:b")
+//!   A→B : [32 bytes]                confirm_a = blake3::keyed_hash(key[..32], "wisp:confirm:a")
+//!   B→A : [32 bytes]                confirm_b = blake3::keyed_hash(key[..32], "wisp:confirm:b")
 //!
 //! After both confirmations pass the application protocol continues unmodified.
 
@@ -93,7 +93,7 @@ pub async fn receiver_handshake(
 fn mac(key: &[u8], label: &[u8]) -> [u8; 32] {
     let k: &[u8; 32] = key[..32]
         .try_into()
-        .expect("SPAKE2/Ed25519 key is always 64 bytes");
+        .expect("SPAKE2/Ed25519Group::finish returns exactly 32 bytes");
     *blake3::keyed_hash(k, label).as_bytes()
 }
 

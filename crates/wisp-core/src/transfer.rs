@@ -7,10 +7,12 @@
 //! Wire format over a single QUIC bidirectional stream (same for LAN and WAN):
 //!
 //!   [SPAKE2 + confirmation handshake — see pake.rs]
-//!   receiver → sender : "GET"  then stream finish
+//!   receiver → sender : any bytes then stream finish  (synchronization gate)
 //!   sender   → receiver : [u32 BE meta_len][meta_json][raw file bytes]
 //!
-//! Integrity: BLAKE3 verify-before-rename (`.wisp-part` → final name).
+//! Integrity (receiver side): BLAKE3 hash verified before `.wisp-part` is
+//! renamed to its final name. The sender does not perform this check — it
+//! trusts the pre-computed hash it advertises.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -27,7 +29,12 @@ use crate::{discovery, pake, relay, transport};
 
 const CHUNK: usize = 64 * 1024;
 const MAX_META: usize = 64 * 1024;
+const MAX_FILE_SIZE: u64 = 1_099_511_627_776; // 1 TiB
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
+const PAKE_TIMEOUT: Duration = Duration::from_secs(30);
+const QUIC_TIMEOUT: Duration = Duration::from_secs(30);
+const CHUNK_TIMEOUT: Duration = Duration::from_secs(30);
+const POST_SEND_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Serialize, Deserialize)]
 struct FileMeta {
@@ -93,11 +100,15 @@ pub async fn send_file(
 
     let (mut send, mut recv) = conn.accept_bi().await.context("accepting stream")?;
 
-    pake::sender_handshake(&code, &mut send, &mut recv)
-        .await
-        .context("PAKE handshake failed")?;
+    tokio::time::timeout(
+        PAKE_TIMEOUT,
+        pake::sender_handshake(&code, &mut send, &mut recv),
+    )
+    .await
+    .context("PAKE handshake timed out")?
+    .context("PAKE handshake failed")?;
 
-    recv.read_to_end(16).await.context("waiting for GET from receiver")?;
+    recv.read_to_end(16).await.context("waiting for receiver ready signal")?;
 
     let meta = FileMeta {
         name: name.clone(),
@@ -124,7 +135,9 @@ pub async fn send_file(
     send.finish().context("finishing stream")?;
     pb.finish_and_clear();
 
-    conn.closed().await;
+    // Give the receiver up to POST_SEND_TIMEOUT to close the connection gracefully.
+    // If it crashes or stalls we still move on and report success — the file was sent.
+    tokio::time::timeout(POST_SEND_TIMEOUT, conn.closed()).await.ok();
     println!("  ✓ delivered {name} ({}) — wisp gone.", human(size));
     Ok(())
 }
@@ -158,17 +171,26 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
     endpoint.set_default_client_config(client_config);
 
     let server_addr = SocketAddr::new(IpAddr::V4(peer_ip), peer_port);
-    let conn = endpoint
+    let connecting = endpoint
         .connect(server_addr, "wisp")
-        .context("initiating connection")?
+        .context("initiating connection")?;
+    let conn = tokio::time::timeout(QUIC_TIMEOUT, connecting)
         .await
+        .context("connection to sender timed out")?
         .context("connecting to sender (fingerprint pinned)")?;
 
-    let (mut send, mut recv) = conn.open_bi().await.context("opening stream")?;
-
-    pake::receiver_handshake(&code, &mut send, &mut recv)
+    let (mut send, mut recv) = tokio::time::timeout(QUIC_TIMEOUT, conn.open_bi())
         .await
-        .context("PAKE handshake failed")?;
+        .context("timed out opening QUIC stream")?
+        .context("opening stream")?;
+
+    tokio::time::timeout(
+        PAKE_TIMEOUT,
+        pake::receiver_handshake(&code, &mut send, &mut recv),
+    )
+    .await
+    .context("PAKE handshake timed out")?
+    .context("PAKE handshake failed")?;
 
     send.write_all(b"GET").await?;
     send.finish().context("finishing request")?;
@@ -187,45 +209,67 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
         .context("reading metadata")?;
     let meta: FileMeta = serde_json::from_slice(&meta_buf).context("parsing metadata")?;
 
+    if meta.size > MAX_FILE_SIZE {
+        return Err(anyhow!(
+            "sender claims file size {} — refusing files over 1 TiB",
+            human(meta.size)
+        ));
+    }
+
     let safe = sanitize(&meta.name);
     let final_path = unique_path(&dir, &safe);
     let part_path = with_part_suffix(&final_path);
 
-    let pb = progress(meta.size, "  ↘ receiving");
-    let mut file = File::create(&part_path)
-        .await
-        .with_context(|| format!("creating {}", part_path.display()))?;
-    let mut hasher = blake3::Hasher::new();
-    let mut buf = vec![0u8; CHUNK];
-    let mut received = 0u64;
+    // Wrap the body receive in an async block so we have a single cleanup point:
+    // on any error between File::create and rename, delete the part file.
+    let outcome: Result<()> = async {
+        let pb = progress(meta.size, "  ↘ receiving");
+        let mut file = File::create(&part_path)
+            .await
+            .with_context(|| format!("creating {}", part_path.display()))?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buf = vec![0u8; CHUNK];
+        let mut received = 0u64;
 
-    while received < meta.size {
-        match recv.read(&mut buf).await.context("reading file data")? {
-            Some(0) | None => break,
-            Some(n) => {
-                hasher.update(&buf[..n]);
-                file.write_all(&buf[..n]).await?;
-                received += n as u64;
-                pb.set_position(received);
+        while received < meta.size {
+            let chunk = tokio::time::timeout(CHUNK_TIMEOUT, recv.read(&mut buf))
+                .await
+                .context("stalled: no data received for 30 s")?
+                .context("reading file data")?;
+            match chunk {
+                Some(0) | None => break,
+                Some(n) => {
+                    hasher.update(&buf[..n]);
+                    file.write_all(&buf[..n]).await?;
+                    received += n as u64;
+                    pb.set_position(received);
+                }
             }
         }
-    }
-    file.flush().await?;
-    pb.finish_and_clear();
+        file.flush().await?;
+        pb.finish_and_clear();
 
-    let actual = hasher.finalize().to_hex().to_string();
-    if received != meta.size || actual != meta.hash {
+        let actual = hasher.finalize().to_hex().to_string();
+        if received != meta.size || actual != meta.hash {
+            return Err(anyhow!(
+                "integrity check FAILED — corrupt or tampered transfer (discarded {} of {} bytes)",
+                received,
+                meta.size
+            ));
+        }
+
+        tokio::fs::rename(&part_path, &final_path)
+            .await
+            .context("finalizing file")?;
+
+        Ok(())
+    }
+    .await;
+
+    if outcome.is_err() {
         let _ = tokio::fs::remove_file(&part_path).await;
-        return Err(anyhow!(
-            "integrity check FAILED — corrupt or tampered transfer (discarded {} of {} bytes)",
-            received,
-            meta.size
-        ));
+        return outcome;
     }
-
-    tokio::fs::rename(&part_path, &final_path)
-        .await
-        .context("finalizing file")?;
 
     conn.close(0u32.into(), b"done");
     endpoint.wait_idle().await;

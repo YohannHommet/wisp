@@ -1,7 +1,7 @@
 //! Short, human-friendly pairing codes: `<number>-<word>-<word>`.
 //!
 //! In Phase 1 the code identifies a transfer advertised over mDNS. In Phase 2
-//! it becomes the password of a PAKE (CPace), so the wordlist is chosen to be
+//! it becomes the password of a PAKE (SPAKE2), so the wordlist is chosen to be
 //! short, unambiguous, and easy to read aloud.
 
 use rand::seq::SliceRandom;

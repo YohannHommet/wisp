@@ -5,6 +5,9 @@
 //! extract the code from the advertisement; only the receiver, who already
 //! knows the code, can compute the same commitment and match it.
 //!
+//! The mDNS service instance name is also set to `ch` (not the raw code) so
+//! that passive LAN observers see only the commitment, not the PAKE password.
+//!
 //! TXT records advertised:
 //!   `ch`  — hex(BLAKE3(code)[..16])  code commitment (32 hex chars)
 //!   `fp`  — hex(cert fingerprint)    BLAKE3 hash of the DER certificate

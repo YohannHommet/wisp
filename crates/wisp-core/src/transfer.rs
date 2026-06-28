@@ -1,20 +1,16 @@
-//! The Wisp transfer protocol (WSP/1), Phase 2.
+//! The Wisp transfer protocol (WSP/1), Phase 3.
 //!
-//! Wire format over a single QUIC bidirectional stream:
+//! Discovery:
+//!   LAN  — mDNS with code commitment + TLS fingerprint (no relay needed)
+//!   WAN  — HTTP rendezvous via a `wisp-relay` server (--relay <host:port>)
+//!
+//! Wire format over a single QUIC bidirectional stream (same for LAN and WAN):
 //!
 //!   [SPAKE2 + confirmation handshake — see pake.rs]
 //!   receiver → sender : "GET"  then stream finish
 //!   sender   → receiver : [u32 BE meta_len][meta_json][raw file bytes]
 //!
-//! The PAKE handshake runs before any file data, proving mutual knowledge of
-//! the pairing code. File metadata (name, size, BLAKE3 hash) is never sent
-//! over mDNS; it travels exclusively inside the TLS-encrypted, PAKE-
-//! authenticated stream.
-//!
-//! Integrity: the receiver streams into a `.wisp-part` file, hashes with
-//! BLAKE3 incrementally, and renames to the final name *only* after the hash
-//! matches. A mismatch deletes the partial file — no unverified byte is ever
-//! exposed under the final filename.
+//! Integrity: BLAKE3 verify-before-rename (`.wisp-part` → final name).
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -27,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::{discovery, pake, transport};
+use crate::{discovery, pake, relay, transport};
 
 const CHUNK: usize = 64 * 1024;
 const MAX_META: usize = 64 * 1024;
@@ -40,9 +36,13 @@ struct FileMeta {
     hash: String,
 }
 
-/// Send a file: advertise it on the LAN (commitment only) and serve it to the
-/// first receiver that passes the PAKE handshake.
-pub async fn send_file(path: PathBuf, display_name: Option<String>) -> Result<()> {
+/// Send a file. Pass `relay_url` (e.g. `"http://relay.example.com:7777"`) to
+/// reach a receiver on a different network; omit for LAN-only (mDNS).
+pub async fn send_file(
+    path: PathBuf,
+    display_name: Option<String>,
+    relay_url: Option<String>,
+) -> Result<()> {
     if !path.is_file() {
         return Err(anyhow!("not a regular file: {}", path.display()));
     }
@@ -64,15 +64,25 @@ pub async fn send_file(path: PathBuf, display_name: Option<String>) -> Result<()
     )
     .context("starting QUIC server")?;
     let port = endpoint.local_addr()?.port();
-
-    let ip = local_ipv4()?;
-    let code = crate::code::generate();
     let fp_hex = hex::encode(fingerprint);
+    let code = crate::code::generate();
 
-    // Phase 2: advertise only the code commitment + fingerprint (no file metadata).
-    let _advert = discovery::advertise(&code, ip, port, &fp_hex)?;
-
-    print_send_banner(&code, &name, size, ip, port, &hash);
+    // Discovery: LAN (mDNS) or WAN (relay).
+    // _advert keeps the mDNS registration alive until we drop it after the transfer.
+    let _advert;
+    if let Some(ref url) = relay_url {
+        let host = relay::strip_scheme(url);
+        let ch = crate::code_commitment(&code);
+        let observed_ip = relay::announce(host, &ch, &fp_hex, port)
+            .await
+            .context("relay announce")?;
+        _advert = None::<discovery::Advert>;
+        print_send_banner_wan(&code, &name, size, observed_ip, port, &hash, url);
+    } else {
+        let ip = local_ipv4()?;
+        _advert = Some(discovery::advertise(&code, ip, port, &fp_hex)?);
+        print_send_banner_lan(&code, &name, size, ip, port, &hash);
+    }
 
     let incoming = endpoint
         .accept()
@@ -83,12 +93,10 @@ pub async fn send_file(path: PathBuf, display_name: Option<String>) -> Result<()
 
     let (mut send, mut recv) = conn.accept_bi().await.context("accepting stream")?;
 
-    // Phase 2: PAKE handshake before any file data.
     pake::sender_handshake(&code, &mut send, &mut recv)
         .await
         .context("PAKE handshake failed")?;
 
-    // Read the receiver's "GET" request.
     let _ = recv.read_to_end(16).await;
 
     let meta = FileMeta {
@@ -121,26 +129,35 @@ pub async fn send_file(path: PathBuf, display_name: Option<String>) -> Result<()
     Ok(())
 }
 
-/// Receive a file by its pairing code.
-pub async fn receive_file(code: String, dir: PathBuf) -> Result<()> {
+/// Receive a file by its pairing code. Pass `relay_url` for WAN mode.
+pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>) -> Result<()> {
     tokio::fs::create_dir_all(&dir)
         .await
         .with_context(|| format!("creating output directory {}", dir.display()))?;
 
-    println!("  searching for `{code}` on the local network…");
-    let resolved = tokio::task::spawn_blocking({
-        let code = code.clone();
-        move || discovery::find(&code, DISCOVERY_TIMEOUT)
-    })
-    .await
-    .context("discovery task")??;
+    // Discovery: LAN (mDNS) or WAN (relay).
+    let (peer_ip, peer_port, fingerprint) = if let Some(ref url) = relay_url {
+        let host = relay::strip_scheme(url);
+        println!("  querying relay for `{code}`…");
+        let (ip, port, fp) = relay::find_wan(host, &code).await.context("relay lookup")?;
+        (ip, port, fp)
+    } else {
+        println!("  searching for `{code}` on the local network…");
+        let resolved = tokio::task::spawn_blocking({
+            let code = code.clone();
+            move || discovery::find(&code, DISCOVERY_TIMEOUT)
+        })
+        .await
+        .context("discovery task")??;
+        (resolved.addr, resolved.port, resolved.fingerprint)
+    };
 
-    let client_config = transport::make_client_config(resolved.fingerprint)?;
+    let client_config = transport::make_client_config(fingerprint)?;
     let mut endpoint = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))
         .context("starting QUIC client")?;
     endpoint.set_default_client_config(client_config);
 
-    let server_addr = SocketAddr::new(IpAddr::V4(resolved.addr), resolved.port);
+    let server_addr = SocketAddr::new(IpAddr::V4(peer_ip), peer_port);
     let conn = endpoint
         .connect(server_addr, "wisp")
         .context("initiating connection")?
@@ -149,7 +166,6 @@ pub async fn receive_file(code: String, dir: PathBuf) -> Result<()> {
 
     let (mut send, mut recv) = conn.open_bi().await.context("opening stream")?;
 
-    // Phase 2: PAKE handshake before sending "GET".
     pake::receiver_handshake(&code, &mut send, &mut recv)
         .await
         .context("PAKE handshake failed")?;
@@ -157,7 +173,6 @@ pub async fn receive_file(code: String, dir: PathBuf) -> Result<()> {
     send.write_all(b"GET").await?;
     send.finish().context("finishing request")?;
 
-    // Read the metadata frame (name, size, hash) — now exclusively on-wire.
     let mut len_buf = [0u8; 4];
     recv.read_exact(&mut len_buf)
         .await
@@ -323,15 +338,37 @@ fn local_ipv4() -> Result<Ipv4Addr> {
     }
 }
 
-fn print_send_banner(code: &str, name: &str, size: u64, ip: Ipv4Addr, port: u16, hash: &str) {
+fn print_send_banner_lan(code: &str, name: &str, size: u64, ip: Ipv4Addr, port: u16, hash: &str) {
     println!();
-    println!("  ✦ wisp ready");
+    println!("  ✦ wisp ready  (LAN)");
     println!("    file   {name} ({})", human(size));
     println!("    from   {ip}:{port}");
     println!("    blake3 {}…", &hash[..hash.len().min(16)]);
     println!();
     println!("    on the other machine, run:");
     println!("      wisp recv {code}");
+    println!();
+    println!("  waiting for a receiver…");
+}
+
+fn print_send_banner_wan(
+    code: &str,
+    name: &str,
+    size: u64,
+    observed_ip: Ipv4Addr,
+    port: u16,
+    hash: &str,
+    relay_url: &str,
+) {
+    println!();
+    println!("  ✦ wisp ready  (WAN via relay)");
+    println!("    file   {name} ({})", human(size));
+    println!("    public {observed_ip}:{port}");
+    println!("    relay  {relay_url}");
+    println!("    blake3 {}…", &hash[..hash.len().min(16)]);
+    println!();
+    println!("    on the other machine, run:");
+    println!("      wisp recv --relay {relay_url} {code}");
     println!();
     println!("  waiting for a receiver…");
 }

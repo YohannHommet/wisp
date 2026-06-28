@@ -21,6 +21,10 @@ enum Command {
         /// Override the filename shown to the receiver.
         #[arg(long)]
         name: Option<String>,
+        /// WAN relay URL, e.g. `http://relay.example.com:7777`.
+        /// Omit for LAN-only (mDNS discovery).
+        #[arg(long)]
+        relay: Option<String>,
     },
     /// Receive a file using the code shown by the sender.
     Recv {
@@ -29,6 +33,9 @@ enum Command {
         /// Directory to save the received file into.
         #[arg(long, default_value = ".")]
         dir: PathBuf,
+        /// WAN relay URL (must match the one used by the sender).
+        #[arg(long)]
+        relay: Option<String>,
     },
 }
 
@@ -45,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Command::Send { file, name } => wisp_core::send_file(file, name).await,
-        Command::Recv { code, dir } => wisp_core::receive_file(code, dir).await,
+        Command::Send { file, name, relay } => wisp_core::send_file(file, name, relay).await,
+        Command::Recv { code, dir, relay } => wisp_core::receive_file(code, dir, relay).await,
     }
 }

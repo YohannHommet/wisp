@@ -7,7 +7,7 @@ End-to-end encrypted · integrity-verified · zero trust, zero servers.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.82+-orange.svg)](https://www.rust-lang.org)
-[![Status](https://img.shields.io/badge/status-Phase%202%20(PAKE%2BLAN)-brightgreen.svg)](docs/THREAT_MODEL.md)
+[![Status](https://img.shields.io/badge/status-Phase%203%20(WAN%2BPAKE)-brightgreen.svg)](docs/THREAT_MODEL.md)
 
 </div>
 
@@ -29,8 +29,9 @@ incumbents don't ship together:
 - **QUIC transport.** Built on QUIC (TLS 1.3): multiplexed, no head-of-line
   blocking, fast 1-RTT handshakes, connection migration.
 - **Zero trust infrastructure.** Pairing is a short human code. No accounts, no
-  PKI, no server that can read your data. *(PAKE-authenticated channel lands in
-  Phase 2; see the roadmap.)*
+  PKI, no server that can read your data. The optional relay is structurally
+  blind — it sees only a BLAKE3 commitment of the code and never touches file
+  content or metadata.
 - **One static binary.** No runtime, no daemon, no app store.
 
 ## Install
@@ -46,45 +47,59 @@ cargo build --release
 
 ## Quick start
 
-On the **sending** machine:
+### LAN (same network)
 
 ```bash
+# sender
 wisp send report.pdf
-```
 
-```
-  ✦ wisp ready
-    file   report.pdf (4.21 MB)
-    from   192.168.1.42:51873
-    blake3 9f2c1a0b7d4e5f6a…
-
-    on the other machine, run:
-      wisp recv 7-tiger-saturn
-
-  waiting for a receiver…
-```
-
-On the **receiving** machine (same LAN):
-
-```bash
+# receiver (same LAN)
 wisp recv 7-tiger-saturn
 ```
 
+### WAN (different networks)
+
+Run a relay somewhere public (VPS, home server with open port):
+
+```bash
+wisp-relay 7777
 ```
-  ↘ receiving ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.21 MB/4.21 MB · 612 MB/s · ETA 0s
-  ✓ verified · 4.21 MB · saved to ./report.pdf
+
+Then:
+
+```bash
+# sender
+wisp send --relay http://relay.example.com:7777 report.pdf
+
+#   ✦ wisp ready  (WAN via relay)
+#     file   report.pdf (4.21 MB)
+#     public 203.0.113.1:51873
+#     relay  http://relay.example.com:7777
+#
+#     on the other machine, run:
+#       wisp recv --relay http://relay.example.com:7777 7-tiger-saturn
+
+# receiver (anywhere)
+wisp recv --relay http://relay.example.com:7777 7-tiger-saturn
+
+#   ↘ receiving ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.21 MB/4.21 MB · 612 MB/s · ETA 0s
+#   ✓ verified · 4.21 MB · saved to ./report.pdf
 ```
+
+The relay only brokers the connection — it never sees file content or metadata.
 
 ## Security status — read this
 
-Wisp is built in honest phases. **Phase 2 (current)** ships mutual
-authentication via **SPAKE2** (RFC 9382): the pairing code becomes a PAKE
-password — both sides prove they know it before a byte of file data is
-exchanged. An active mDNS spoofer who does not know the code will fail the
-handshake. File metadata (filename, size) is no longer in mDNS; it lives
-exclusively inside the TLS-encrypted, PAKE-authenticated stream. The only
-cleartext on the LAN is a 16-byte BLAKE3 commitment of the code and the
-TLS fingerprint.
+Wisp is built in honest phases. **Phase 3 (current)** adds WAN reach via a
+structurally blind relay: the relay sees only a 16-byte BLAKE3 commitment of
+the code and the TLS fingerprint — never file content or metadata. The direct
+QUIC connection (SPAKE2-authenticated, TLS-encrypted) is established between
+sender and receiver; the relay's only job is initial rendezvous and public-IP
+discovery.
+
+Phase 3 works when at least one party has a reachable public address (VPS,
+home router with port forwarding). Full hole-punching for symmetric NAT is
+planned for Phase 3.5.
 
 👉 The full, phase-by-phase security contract lives in
 **[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)**. We never claim a property we
@@ -96,7 +111,7 @@ have not shipped.
 | --- | --- | --- |
 | **1** ✅ | LAN, verified | mDNS discovery · QUIC/TLS · BLAKE3 verify-before-rename |
 | **2** ✅ | Authenticated channel | SPAKE2 (RFC 9382) · code commitment in mDNS · encrypted metadata |
-| **3** | WAN | DHT rendezvous · NAT hole-punching · **blind relay** |
+| **3** ✅ | WAN | Blind relay rendezvous · observed public IP · `wisp-relay` binary |
 | **4** | Speed & assurance | multipath bonding · FEC · fuzzing · formal proof · audit |
 
 See **[docs/BRANDING.md](docs/BRANDING.md)** for the brand book and
@@ -109,10 +124,12 @@ crates/
   wisp-core/      the protocol library
     code.rs       short pairing codes (PAKE password)
     pake.rs       SPAKE2 mutual authentication (RFC 9382)
-    discovery.rs  mDNS advertise / find (code commitment, no metadata)
+    discovery.rs  mDNS advertise / find (LAN, code commitment)
+    relay.rs      HTTP client for WAN rendezvous (--relay)
     transport.rs  QUIC + self-signed cert + fingerprint pinning
     transfer.rs   WSP/1 wire protocol + PAKE handshake + verified streaming
-  wisp-cli/       the `wisp` binary (clap)
+  wisp-cli/       the `wisp` binary (clap, --relay flag)
+  wisp-relay/     the `wisp-relay` blind rendezvous server (axum)
 ```
 
 ## License

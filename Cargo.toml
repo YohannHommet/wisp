@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/wisp-core", "crates/wisp-cli"]
+members = ["crates/wisp-core", "crates/wisp-cli", "crates/wisp-relay"]
 
 [workspace.package]
 version = "0.1.0"
@@ -28,6 +28,8 @@ local-ip-address = "0.6"
 rand = "0.8"
 hex = "0.4"
 spake2 = "0.4"
+axum = "0.7"
+dashmap = "6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

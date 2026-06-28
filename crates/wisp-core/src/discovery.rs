@@ -43,7 +43,7 @@ impl Drop for Advert {
 
 /// Advertise a transfer on the LAN under `code` (commitment only).
 pub fn advertise(code: &str, ip: Ipv4Addr, port: u16, fingerprint_hex: &str) -> Result<Advert> {
-    let ch = code_commitment(code);
+    let ch = crate::code_commitment(code);
     let daemon = ServiceDaemon::new().context("starting mDNS daemon")?;
     let host = format!("wisp-{port}.local.");
     let props: [(&str, &str); 2] = [("ch", &ch), ("fp", fingerprint_hex)];
@@ -56,7 +56,7 @@ pub fn advertise(code: &str, ip: Ipv4Addr, port: u16, fingerprint_hex: &str) -> 
 
 /// Browse the LAN for `code` (matched via its commitment) until found or timeout.
 pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
-    let ch_expected = code_commitment(code);
+    let ch_expected = crate::code_commitment(code);
     let daemon = ServiceDaemon::new().context("starting mDNS daemon")?;
     let receiver = daemon
         .browse(SERVICE_TYPE)
@@ -96,11 +96,6 @@ pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
             }
         }
     }
-}
-
-/// BLAKE3(code)[..16] encoded as hex — 32-char string.
-fn code_commitment(code: &str) -> String {
-    hex::encode(&blake3::hash(code.as_bytes()).as_bytes()[..16])
 }
 
 fn parse_fingerprint(info: &ServiceInfo) -> Result<[u8; 32]> {

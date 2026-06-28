@@ -165,6 +165,12 @@ async fn handle_sub(
 
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
+        // Create the Notified future BEFORE checking the store so that a
+        // notify_waiters() call that races between the check and the await
+        // is not lost. If the sender fires between notified() creation and
+        // the first poll, Tokio marks the future immediately ready.
+        let notified = notify.notified();
+
         let found = state.store.get(&ch).and_then(|e| {
             if e.expires > Instant::now() {
                 Some((e.ip.clone(), e.port, e.fp.clone()))
@@ -185,7 +191,7 @@ async fn handle_sub(
             break;
         }
         // Park until the sender notifies us or the timeout fires.
-        let _ = tokio::time::timeout(remaining, notify.notified()).await;
+        let _ = tokio::time::timeout(remaining, notified).await;
     }
 
     state.waiters.remove(&ch);

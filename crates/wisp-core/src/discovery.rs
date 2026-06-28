@@ -47,7 +47,10 @@ pub fn advertise(code: &str, ip: Ipv4Addr, port: u16, fingerprint_hex: &str) -> 
     let daemon = ServiceDaemon::new().context("starting mDNS daemon")?;
     let host = format!("wisp-{port}.local.");
     let props: [(&str, &str); 2] = [("ch", &ch), ("fp", fingerprint_hex)];
-    let info = ServiceInfo::new(SERVICE_TYPE, code, &host, IpAddr::V4(ip), port, &props[..])
+    // Use `ch` (the commitment) as the instance name, not the raw code.
+    // The instance name is broadcast in cleartext; using the code directly
+    // would expose the PAKE password to any mDNS observer on the LAN.
+    let info = ServiceInfo::new(SERVICE_TYPE, &ch, &host, IpAddr::V4(ip), port, &props[..])
         .context("building mDNS service info")?;
     let fullname = info.get_fullname().to_string();
     daemon.register(info).context("registering mDNS service")?;

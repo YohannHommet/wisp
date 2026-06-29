@@ -91,10 +91,10 @@ pub async fn receiver_handshake(
 }
 
 fn mac(key: &[u8], label: &[u8]) -> [u8; 32] {
-    let k: &[u8; 32] = key[..32]
-        .try_into()
-        .expect("SPAKE2/Ed25519Group::finish returns exactly 32 bytes");
-    *blake3::keyed_hash(k, label).as_bytes()
+    let mut k = [0u8; 32];
+    let len = key.len().min(32);
+    k[..len].copy_from_slice(&key[..len]);
+    *blake3::keyed_hash(&k, label).as_bytes()
 }
 
 async fn write_frame(send: &mut SendStream, msg: &[u8]) -> Result<()> {

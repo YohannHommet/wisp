@@ -69,7 +69,7 @@ pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
         .context("starting mDNS browse")?;
     let deadline = Instant::now() + timeout;
 
-    loop {
+    let res = (|| loop {
         let remaining = deadline
             .checked_duration_since(Instant::now())
             .ok_or_else(|| anyhow!("no sender found for code `{code}` on the local network"))?;
@@ -93,7 +93,6 @@ pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
                     }
                 };
                 let port = info.get_port();
-                let _ = daemon.shutdown();
                 return Ok(Resolved {
                     addr,
                     port,
@@ -107,7 +106,10 @@ pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
                 ))
             }
         }
-    }
+    })();
+
+    let _ = daemon.shutdown();
+    res
 }
 
 fn parse_fingerprint(info: &ServiceInfo) -> Result<[u8; 32]> {

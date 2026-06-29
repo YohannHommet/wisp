@@ -10,16 +10,18 @@
 //!
 //! Usage: wisp-relay [port]     (default 7777)
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::extract::{ConnectInfo, Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::{routing::get, Json, Router};
 use dashmap::DashMap;
 use serde_json::{json, Value};
 use tokio::sync::Notify;
+
+const MAX_CAPACITY: usize = 10000;
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -45,8 +47,40 @@ fn valid_hex(s: &str, expected_len: usize) -> bool {
     s.len() == expected_len && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+fn extract_ipv4(headers: &HeaderMap, peer_addr: SocketAddr) -> Result<Ipv4Addr, &'static str> {
+    let mut ip = peer_addr.ip();
+    // Check X-Forwarded-For first
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|h| h.to_str().ok()) {
+        if let Some(first_ip) = xff.split(',').next().map(|s| s.trim()) {
+            if let Ok(parsed) = first_ip.parse::<IpAddr>() {
+                ip = parsed;
+            }
+        }
+    } else if let Some(xri) = headers.get("x-real-ip").and_then(|h| h.to_str().ok()) {
+        // Fall back to X-Real-IP
+        if let Ok(parsed) = xri.trim().parse::<IpAddr>() {
+            ip = parsed;
+        }
+    }
+
+    match ip {
+        IpAddr::V4(v4) => Ok(v4),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => Ok(v4),
+            None => Err("IPv6 not supported"),
+        },
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // CLI Help Check
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        println!("Usage: wisp-relay [port]     (default 7777)");
+        return Ok(());
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -54,8 +88,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let port: u16 = std::env::args()
-        .nth(1)
+    let port: u16 = args
+        .get(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(7777);
 
@@ -64,13 +98,14 @@ async fn main() -> anyhow::Result<()> {
         waiters: DashMap::new(),
     });
 
-    // Purge expired entries every 15s.
+    // Purge expired store entries and orphaned waiters every 15s.
     tokio::spawn({
         let state = state.clone();
         async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(15)).await;
                 state.store.retain(|_, v| v.expires > Instant::now());
+                state.waiters.retain(|_, notify| Arc::strong_count(notify) > 1);
             }
         }
     });
@@ -97,6 +132,7 @@ async fn handle_pub(
     Path((ch, fp, port_str)): Path<(String, String, String)>,
     State(state): State<Store>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
     let port: u16 = match port_str.parse() {
         Ok(p) => p,
@@ -119,18 +155,28 @@ async fn handle_pub(
             Json(json!({"error": "ch must be 32 hex chars, fp must be 64 hex chars"})),
         );
     }
-    let ip = match addr.ip() {
-        IpAddr::V4(v4) => v4.to_string(),
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => v4.to_string(),
-            None => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({"error": "IPv6 not supported"})),
-                )
-            }
-        },
+
+    // Capacity limit check
+    if state.store.len() >= MAX_CAPACITY {
+        state.store.retain(|_, v| v.expires > Instant::now());
+        if state.store.len() >= MAX_CAPACITY {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "relay capacity exceeded"})),
+            );
+        }
+    }
+
+    let ip = match extract_ipv4(&headers, addr) {
+        Ok(ip) => ip.to_string(),
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": e})),
+            )
+        }
     };
+
     tracing::info!(ch = %ch.get(..8).unwrap_or(&ch), %ip, port, "sender announced");
     state.store.insert(
         ch.clone(),
@@ -156,6 +202,24 @@ async fn handle_sub(
     Path(ch): Path<String>,
     State(state): State<Store>,
 ) -> (StatusCode, Json<Value>) {
+    if !valid_hex(&ch, 32) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "ch must be 32 hex chars"})),
+        );
+    }
+
+    // Capacity limit check for waiters
+    if state.waiters.len() >= MAX_CAPACITY {
+        state.waiters.retain(|_, notify| Arc::strong_count(notify) > 1);
+        if state.waiters.len() >= MAX_CAPACITY {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "relay waiter capacity exceeded"})),
+            );
+        }
+    }
+
     // Get-or-create the Notify for this ch so handle_pub can wake us.
     let notify = state
         .waiters
@@ -179,7 +243,6 @@ async fn handle_sub(
             }
         });
         if let Some((ip, port, fp)) = found {
-            state.waiters.remove(&ch);
             tracing::info!(ch = %ch.get(..8).unwrap_or(&ch), %ip, port, "receiver found sender");
             return (
                 StatusCode::OK,
@@ -194,7 +257,6 @@ async fn handle_sub(
         let _ = tokio::time::timeout(remaining, notified).await;
     }
 
-    state.waiters.remove(&ch);
     (
         StatusCode::NOT_FOUND,
         Json(json!({"error": "no sender found within timeout"})),
@@ -225,6 +287,56 @@ mod tests {
         assert!(!valid_hex(&"g".repeat(32), 32));
         assert!(!valid_hex(&"z".repeat(64), 64));
         assert!(!valid_hex(&" ".repeat(32), 32));
+    }
+
+    #[test]
+    fn test_extract_ipv4_direct() {
+        let headers = HeaderMap::new();
+        let peer_addr = SocketAddr::from(([192, 168, 1, 50], 12345));
+        let ip = extract_ipv4(&headers, peer_addr).unwrap();
+        assert_eq!(ip, Ipv4Addr::new(192, 168, 1, 50));
+    }
+
+    #[test]
+    fn test_extract_ipv4_x_forwarded_for() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.195, 70.41.3.18, 150.172.238.178".parse().unwrap());
+        let peer_addr = SocketAddr::from(([127, 0, 0, 1], 12345));
+        let ip = extract_ipv4(&headers, peer_addr).unwrap();
+        assert_eq!(ip, Ipv4Addr::new(203, 0, 113, 195));
+    }
+
+    #[test]
+    fn test_extract_ipv4_x_real_ip() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "203.0.113.196".parse().unwrap());
+        let peer_addr = SocketAddr::from(([127, 0, 0, 1], 12345));
+        let ip = extract_ipv4(&headers, peer_addr).unwrap();
+        assert_eq!(ip, Ipv4Addr::new(203, 0, 113, 196));
+    }
+
+    #[test]
+    fn test_extract_ipv4_v6_mapped() {
+        let headers = HeaderMap::new();
+        // IPv4-mapped IPv6 address: ::ffff:192.168.1.50
+        let v6_mapped = SocketAddr::new(
+            IpAddr::V6("::ffff:192.168.1.50".parse().unwrap()),
+            12345,
+        );
+        let ip = extract_ipv4(&headers, v6_mapped).unwrap();
+        assert_eq!(ip, Ipv4Addr::new(192, 168, 1, 50));
+    }
+
+    #[test]
+    fn test_extract_ipv4_v6_unmapped_fails() {
+        let headers = HeaderMap::new();
+        let v6_unmapped = SocketAddr::new(
+            IpAddr::V6("2001:db8::1".parse().unwrap()),
+            12345,
+        );
+        let res = extract_ipv4(&headers, v6_unmapped);
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), "IPv6 not supported");
     }
 }
 

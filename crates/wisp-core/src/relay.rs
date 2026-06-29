@@ -80,14 +80,14 @@ async fn http_get(host: &str, path: &str) -> Result<String> {
     let raw = String::from_utf8_lossy(&buf);
     let status_line = raw.lines().next().unwrap_or("");
 
-    // Split headers / body on the blank line.
-    let body = raw
-        .split("\r\n\r\n")
-        .nth(1)
-        .or_else(|| raw.split("\n\n").nth(1))
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let body = if let Some(idx) = raw.find("\r\n\r\n") {
+        &raw[idx + 4..]
+    } else if let Some(idx) = raw.find("\n\n") {
+        &raw[idx + 2..]
+    } else {
+        ""
+    };
+    let body = body.trim().to_string();
 
     if status_line.split_whitespace().nth(1) != Some("200") {
         let err_msg = serde_json::from_str::<serde_json::Value>(&body)

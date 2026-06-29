@@ -2,8 +2,8 @@
 
 # ✦ Wisp
 
-**Send anything, to anyone, instantly.**
-End-to-end encrypted · integrity-verified · zero trust, zero servers.
+**Send files to anyone, encrypted, in one command.**  
+End-to-end encrypted · BLAKE3-verified · zero accounts, zero cloud.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.82+-orange.svg)](https://www.rust-lang.org)
@@ -13,26 +13,7 @@ End-to-end encrypted · integrity-verified · zero trust, zero servers.
 
 > A wisp of light that finds its way to you, then vanishes.
 
-Wisp is a from-scratch reimagining of peer-to-peer file transfer built on a
-simple thesis: the security of a Magic-Wormhole code, the speed of a WireGuard
-tunnel, and **zero infrastructure you have to trust** — in a single binary, with
-one short code.
-
-## Why Wisp is different
-
-Plenty of tools are "secure and fast." Wisp's moat is the *combination* the
-incumbents don't ship together:
-
-- **Verified streaming.** Integrity is checked with BLAKE3 as bytes arrive, and
-  Wisp **never writes an unverified byte under the final filename**. Data lands
-  in a `.wisp-part` file and is atomically renamed only after verification.
-- **QUIC transport.** Built on QUIC (TLS 1.3): multiplexed, no head-of-line
-  blocking, fast 1-RTT handshakes, connection migration.
-- **Zero trust infrastructure.** Pairing is a short human code. No accounts, no
-  PKI, no server that can read your data. The optional relay is structurally
-  blind — it sees only a BLAKE3 commitment of the code and never touches file
-  content or metadata.
-- **One static binary.** No runtime, no daemon, no app store.
+---
 
 ## Install
 
@@ -42,98 +23,235 @@ Requires the [Rust toolchain](https://rustup.rs) (1.82+).
 git clone https://github.com/YohannHommet/wisp.git
 cd wisp
 cargo build --release
-# binary at target/release/wisp
 ```
 
-## Quick start
+Binaries land at `target/release/wisp` and `target/release/wisp-relay`.  
+Add them to your `$PATH` or use the dev runner (`scripts/run.sh`) during development.
 
-### LAN (same network)
+---
 
-```bash
-# sender
-wisp send report.pdf
+## Usage
 
-# receiver (same LAN)
-wisp recv 7-tiger-saturn
+### LAN — same Wi-Fi or Ethernet network
+
+No relay needed. Works on any local network.
+
+**Sender:**
+```
+$ wisp send photo.jpg
+
+  ✦ wisp ready  (LAN)
+    file   photo.jpg (3.4 MB)
+    from   192.168.1.42:51023
+    blake3 a3f9c12e8b4d7…
+
+    on the other machine, run:
+      wisp recv 7-tiger-saturn
+
+  waiting for a receiver…
 ```
 
-### WAN (different networks)
+**Receiver** (same LAN, share the code however you like — chat, phone call):
+```
+$ wisp recv 7-tiger-saturn
 
-Run a relay somewhere public (VPS, home server with open port):
-
-```bash
-wisp-relay 7777
+  ↘ receiving ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.4 MB/3.4 MB · 580 MB/s · ETA 0s
+  ✓ delivered photo.jpg (3.4 MB) — wisp gone.
 ```
 
-Then:
+File saves to the current directory. Done — no login, no upload, no account.
 
+---
+
+### WAN — different networks (requires a relay)
+
+The relay brokers the initial connection; it **never sees file content or metadata**.
+
+**Step 1** — run the relay on any machine with a public IP (VPS, home server with open port):
 ```bash
-# sender
-wisp send --relay http://relay.example.com:7777 report.pdf
+wisp-relay 7777          # listens on 0.0.0.0:7777
+```
 
-#   ✦ wisp ready  (WAN via relay)
-#     file   report.pdf (4.21 MB)
-#     public 203.0.113.1:51873
-#     relay  http://relay.example.com:7777
-#
-#     on the other machine, run:
-#       wisp recv --relay http://relay.example.com:7777 7-tiger-saturn
+**Step 2** — sender passes the relay URL:
+```
+$ wisp send --relay http://relay.example.com:7777 photo.jpg
 
-# receiver (anywhere)
+  ✦ wisp ready  (WAN via relay)
+    file   photo.jpg (3.4 MB)
+    public 203.0.113.1:51873
+    relay  http://relay.example.com:7777
+
+    on the other machine, run:
+      wisp recv --relay http://relay.example.com:7777 7-tiger-saturn
+```
+
+**Step 3** — receiver uses the same relay URL and code:
+```bash
 wisp recv --relay http://relay.example.com:7777 7-tiger-saturn
-
-#   ↘ receiving ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.21 MB/4.21 MB · 612 MB/s · ETA 0s
-#   ✓ verified · 4.21 MB · saved to ./report.pdf
 ```
 
-The relay only brokers the connection — it never sees file content or metadata.
+> **NAT note:** WAN mode works when the sender has a reachable public address (VPS, or home router with port forwarding). Two users both behind home NAT may fail — the relay handles discovery only, not data proxying. Full NAT traversal is planned for Phase 4.
 
-## Security status — read this
+---
 
-Wisp is built in honest phases. **Phase 3 (current)** adds WAN reach via a
-structurally blind relay: the relay sees only a 16-byte BLAKE3 commitment of
-the code and the TLS fingerprint — never file content or metadata. The direct
-QUIC connection (SPAKE2-authenticated, TLS-encrypted) is established between
-sender and receiver; the relay's only job is initial rendezvous and public-IP
-discovery.
+## CLI reference
 
-Phase 3 works when at least one party has a reachable public address (VPS,
-home router with port forwarding). Full hole-punching for symmetric NAT is
-planned for Phase 3.5.
+### `wisp send`
 
-👉 The full, phase-by-phase security contract lives in
-**[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)**. We never claim a property we
-have not shipped.
+```
+wisp send [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>              File to send
+
+Options:
+  -n, --name <NAME>   Override the filename shown to the receiver
+  -r, --relay <RELAY> WAN relay URL (omit for LAN)
+  -v, --verbose       Debug logging
+  -h, --help
+```
+
+**Examples:**
+```bash
+wisp send report.pdf
+wisp send report.pdf --name "Q3 Report.pdf"   # receiver sees a different name
+wisp send report.pdf --relay http://relay.example.com:7777
+```
+
+---
+
+### `wisp recv`
+
+```
+wisp recv [OPTIONS] <CODE>
+
+Arguments:
+  <CODE>              Code shown by the sender (e.g. 7-tiger-saturn)
+
+Options:
+  -d, --dir <DIR>     Directory to save into [default: current directory]
+  -r, --relay <RELAY> WAN relay URL (must match sender)
+  -v, --verbose       Debug logging
+  -h, --help
+```
+
+**Examples:**
+```bash
+wisp recv 7-tiger-saturn
+wisp recv 7-tiger-saturn --dir ~/Downloads
+wisp recv 7-tiger-saturn --relay http://relay.example.com:7777 --dir ~/Downloads
+```
+
+If a file with the same name already exists, Wisp saves as `file (1).ext`, `file (2).ext`, etc.
+
+---
+
+### `wisp-relay`
+
+```
+wisp-relay [port]     (default 7777)
+```
+
+Runs an HTTP rendezvous server. Bind it to `0.0.0.0` so it's reachable from the internet.  
+The relay is stateless and structurally blind — it stores only a BLAKE3 commitment of the
+pairing code (not the code itself) and the sender's observed public IP:port.
+
+---
+
+## Development
+
+### Dev runner
+
+```bash
+./scripts/run.sh send <file>          # auto-builds then sends
+./scripts/run.sh recv <code>          # auto-builds then receives
+./scripts/run.sh relay [port]         # start local relay
+```
+
+Rebuilds automatically if any `.rs` source file is newer than the binary.
+
+### Tests
+
+**Unit + integration tests:**
+```bash
+cargo test
+```
+
+**Smoke tests** (end-to-end, real QUIC transfers):
+```bash
+bash scripts/smoke.sh             # 10 cases, ~8s
+bash scripts/smoke.sh --slow      # +wrong-code timeout test (~28s)
+bash scripts/smoke.sh --verbose   # show live wisp output per test
+bash scripts/smoke.sh --release   # test release build
+```
+
+Smoke test cases: small file, 5 MiB binary, `--name` flag, filename collision,
+path-traversal sanitization, SIGINT handling, `.wisp-part` cleanup, WAN relay
+transfer, relay HTTP validation.
+
+---
+
+## How it works
+
+```
+Sender                    Relay (optional)             Receiver
+  │                           │                           │
+  │── /pub/{ch}/{fp}/{port} ─→│  (rendezvous only)        │
+  │                           │←── /sub/{ch} ─────────────│
+  │                           │─── {ip, port, fp} ────────→│
+  │←═══════════════════ QUIC + TLS 1.3 (direct) ══════════│
+  │         SPAKE2 handshake, then streaming transfer      │
+```
+
+- **QUIC / TLS 1.3** — encrypted transport, 1-RTT handshake, ephemeral self-signed cert per session
+- **SPAKE2** — password-authenticated key exchange; wrong code = cryptographic rejection, not a timeout
+- **mDNS** — LAN discovery uses a BLAKE3 commitment of the code, not the code itself
+- **BLAKE3** — streaming integrity check; file is saved under a `.wisp-part` name and atomically renamed only after the hash matches
+- **Relay** — blind rendezvous: sees a 16-byte commitment and public IP:port, never file content
+
+---
+
+## Security
+
+See **[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)** for the full security model.
+
+Short version: the pairing code is the only shared secret. A wrong code fails the SPAKE2 handshake before any file data is exchanged. The relay cannot read or modify transfers (it sees only a hash commitment and IP:port). TLS fingerprint is pinned by the receiver before connecting.
+
+---
 
 ## Roadmap
 
-| Phase | Theme | Highlights |
-| --- | --- | --- |
-| **1** ✅ | LAN, verified | mDNS discovery · QUIC/TLS · BLAKE3 verify-before-rename |
-| **2** ✅ | Authenticated channel | SPAKE2 (RFC 9382) · code commitment in mDNS · encrypted metadata |
-| **3** ✅ | WAN | Blind relay rendezvous · observed public IP · `wisp-relay` binary |
-| **4** | Speed & assurance | multipath bonding · FEC · fuzzing · formal proof · audit |
+| Phase | Status | Theme |
+|---|---|---|
+| 1 | ✅ | LAN · QUIC · BLAKE3 verify-before-rename |
+| 2 | ✅ | SPAKE2 mutual auth · code commitment in mDNS |
+| 3 | ✅ | WAN blind relay · `wisp-relay` binary |
+| 4 | planned | NAT traversal · multipath · audit |
 
-See **[docs/BRANDING.md](docs/BRANDING.md)** for the brand book and
-**[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)** for the security model.
+---
 
 ## Architecture
 
 ```
 crates/
-  wisp-core/      the protocol library
-    code.rs       short pairing codes (PAKE password)
-    pake.rs       SPAKE2 mutual authentication (RFC 9382)
-    discovery.rs  mDNS advertise / find (LAN, code commitment)
-    relay.rs      HTTP client for WAN rendezvous (--relay)
-    transport.rs  QUIC + self-signed cert + fingerprint pinning
-    transfer.rs   WSP/1 wire protocol + PAKE handshake + verified streaming
-  wisp-cli/       the `wisp` binary (clap, --relay flag)
-  wisp-relay/     the `wisp-relay` blind rendezvous server (axum)
+  wisp-core/      protocol library
+    code.rs         short pairing codes
+    pake.rs         SPAKE2 mutual auth (RFC 9382)
+    discovery.rs    mDNS advertise / find
+    relay.rs        HTTP client for WAN rendezvous
+    transport.rs    QUIC + ephemeral TLS cert + fingerprint pinning
+    transfer.rs     wire protocol + PAKE handshake + verified streaming
+  wisp-cli/       `wisp` binary (clap)
+  wisp-relay/     `wisp-relay` blind rendezvous server (axum)
+
+scripts/
+  run.sh          dev runner (auto-build + send/recv/relay)
+  smoke.sh        end-to-end smoke test suite
 ```
+
+---
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
-
+Apache License 2.0 — see [LICENSE](LICENSE).  
 Built by [Yohann Hommet](https://github.com/YohannHommet).

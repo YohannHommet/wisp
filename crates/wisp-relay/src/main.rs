@@ -10,7 +10,7 @@
 //!
 //! Usage: wisp-relay [port]     (default 7777)
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -39,15 +39,36 @@ struct Entry {
 struct AppState {
     store:   DashMap<String, Entry>,
     waiters: DashMap<String, Arc<Notify>>,
+    cleanup_running: std::sync::atomic::AtomicBool,
+    rate_limits: DashMap<IpAddr, (u32, Instant)>,
 }
 
 type Store = Arc<AppState>;
 
-fn valid_hex(s: &str, expected_len: usize) -> bool {
-    s.len() == expected_len && s.bytes().all(|b| b.is_ascii_hexdigit())
+struct CleanupGuard<'a>(&'a std::sync::atomic::AtomicBool);
+impl<'a> Drop for CleanupGuard<'a> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
-fn extract_ipv4(headers: &HeaderMap, peer_addr: SocketAddr) -> Result<Ipv4Addr, &'static str> {
+struct WaiterGuard {
+    ch: String,
+    state: Store,
+}
+impl Drop for WaiterGuard {
+    fn drop(&mut self) {
+        self.state.waiters.remove_if(&self.ch, |_, notify| {
+            std::sync::Arc::strong_count(notify) <= 2
+        });
+    }
+}
+
+fn valid_hex(s: &str, expected_len: usize) -> bool {
+    s.len() == expected_len && s.bytes().all(|b| b.is_ascii_digit() || (b >= b'a' && b <= b'f'))
+}
+
+fn extract_ip(headers: &HeaderMap, peer_addr: SocketAddr) -> Result<IpAddr, &'static str> {
     let mut ip = peer_addr.ip();
     // Check X-Forwarded-For first
     if let Some(xff) = headers.get("x-forwarded-for").and_then(|h| h.to_str().ok()) {
@@ -63,12 +84,39 @@ fn extract_ipv4(headers: &HeaderMap, peer_addr: SocketAddr) -> Result<Ipv4Addr, 
         }
     }
 
-    match ip {
-        IpAddr::V4(v4) => Ok(v4),
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => Ok(v4),
-            None => Err("IPv6 not supported"),
-        },
+    // Normalise IPv6-mapped IPv4 addresses to standard IpAddr::V4
+    if let IpAddr::V6(v6) = ip {
+        if let Some(v4) = v6.to_ipv4_mapped() {
+            ip = IpAddr::V4(v4);
+        }
+    }
+
+    Ok(ip)
+}
+
+fn check_rate_limit(state: &Store, ip: IpAddr) -> bool {
+    let now = Instant::now();
+    
+    // Periodically prune rate limit records older than 60s
+    if state.rate_limits.len() >= 1000 {
+        if state.cleanup_running.compare_exchange(
+            false, true, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed
+        ).is_ok() {
+            let _guard = CleanupGuard(&state.cleanup_running);
+            state.rate_limits.retain(|_, (_, time)| now.duration_since(*time) < Duration::from_secs(60));
+        }
+    }
+
+    let mut entry = state.rate_limits.entry(ip).or_insert((0, now));
+    let (count, start_time) = entry.value_mut();
+    
+    if now.duration_since(*start_time) >= Duration::from_secs(60) {
+        *count = 1;
+        *start_time = now;
+        true
+    } else {
+        *count += 1;
+        *count <= 30
     }
 }
 
@@ -96,6 +144,8 @@ async fn main() -> anyhow::Result<()> {
     let state: Store = Arc::new(AppState {
         store:   DashMap::new(),
         waiters: DashMap::new(),
+        cleanup_running: std::sync::atomic::AtomicBool::new(false),
+        rate_limits: DashMap::new(),
     });
 
     // Purge expired store entries and orphaned waiters every 15s.
@@ -149,6 +199,10 @@ async fn handle_pub(
             Json(json!({"error": "invalid port"})),
         );
     }
+
+    let ch = ch.to_lowercase();
+    let fp = fp.to_lowercase();
+
     if !valid_hex(&ch, 32) || !valid_hex(&fp, 64) {
         return (
             StatusCode::BAD_REQUEST,
@@ -156,9 +210,31 @@ async fn handle_pub(
         );
     }
 
+    let ip_addr = match extract_ip(&headers, addr) {
+        Ok(ip) => ip,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": e})),
+            )
+        }
+    };
+
+    if !check_rate_limit(&state, ip_addr) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error": "rate limit exceeded"})),
+        );
+    }
+
     // Capacity limit check
     if state.store.len() >= MAX_CAPACITY {
-        state.store.retain(|_, v| v.expires > Instant::now());
+        if state.cleanup_running.compare_exchange(
+            false, true, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed
+        ).is_ok() {
+            let _guard = CleanupGuard(&state.cleanup_running);
+            state.store.retain(|_, v| v.expires > Instant::now());
+        }
         if state.store.len() >= MAX_CAPACITY {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -167,15 +243,7 @@ async fn handle_pub(
         }
     }
 
-    let ip = match extract_ipv4(&headers, addr) {
-        Ok(ip) => ip.to_string(),
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": e})),
-            )
-        }
-    };
+    let ip = ip_addr.to_string();
 
     tracing::info!(ch = %ch.get(..8).unwrap_or(&ch), %ip, port, "sender announced");
     state.store.insert(
@@ -201,7 +269,11 @@ async fn handle_pub(
 async fn handle_sub(
     Path(ch): Path<String>,
     State(state): State<Store>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
+    let ch = ch.to_lowercase();
+
     if !valid_hex(&ch, 32) {
         return (
             StatusCode::BAD_REQUEST,
@@ -209,9 +281,31 @@ async fn handle_sub(
         );
     }
 
+    let ip_addr = match extract_ip(&headers, addr) {
+        Ok(ip) => ip,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": e})),
+            )
+        }
+    };
+
+    if !check_rate_limit(&state, ip_addr) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error": "rate limit exceeded"})),
+        );
+    }
+
     // Capacity limit check for waiters
     if state.waiters.len() >= MAX_CAPACITY {
-        state.waiters.retain(|_, notify| Arc::strong_count(notify) > 1);
+        if state.cleanup_running.compare_exchange(
+            false, true, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed
+        ).is_ok() {
+            let _guard = CleanupGuard(&state.cleanup_running);
+            state.waiters.retain(|_, notify| Arc::strong_count(notify) > 1);
+        }
         if state.waiters.len() >= MAX_CAPACITY {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -227,7 +321,14 @@ async fn handle_sub(
         .or_insert_with(|| Arc::new(Notify::new()))
         .clone();
 
+    let guard = WaiterGuard {
+        ch: ch.clone(),
+        state: state.clone(),
+    };
+
     let deadline = Instant::now() + Duration::from_secs(30);
+    let mut result = None;
+
     loop {
         // Create the Notified future BEFORE checking the store so that a
         // notify_waiters() call that races between the check and the await
@@ -244,10 +345,11 @@ async fn handle_sub(
         });
         if let Some((ip, port, fp)) = found {
             tracing::info!(ch = %ch.get(..8).unwrap_or(&ch), %ip, port, "receiver found sender");
-            return (
+            result = Some((
                 StatusCode::OK,
                 Json(json!({"ip": ip, "port": port, "fp": fp})),
-            );
+            ));
+            break;
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
@@ -257,15 +359,19 @@ async fn handle_sub(
         let _ = tokio::time::timeout(remaining, notified).await;
     }
 
-    (
+    drop(notify);
+    drop(guard);
+
+    result.unwrap_or((
         StatusCode::NOT_FOUND,
         Json(json!({"error": "no sender found within timeout"})),
-    )
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv4Addr;
 
     #[test]
     fn valid_hex_accepts_correct_lengths() {
@@ -293,8 +399,8 @@ mod tests {
     fn test_extract_ipv4_direct() {
         let headers = HeaderMap::new();
         let peer_addr = SocketAddr::from(([192, 168, 1, 50], 12345));
-        let ip = extract_ipv4(&headers, peer_addr).unwrap();
-        assert_eq!(ip, Ipv4Addr::new(192, 168, 1, 50));
+        let ip = extract_ip(&headers, peer_addr).unwrap();
+        assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)));
     }
 
     #[test]
@@ -302,8 +408,8 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "203.0.113.195, 70.41.3.18, 150.172.238.178".parse().unwrap());
         let peer_addr = SocketAddr::from(([127, 0, 0, 1], 12345));
-        let ip = extract_ipv4(&headers, peer_addr).unwrap();
-        assert_eq!(ip, Ipv4Addr::new(203, 0, 113, 195));
+        let ip = extract_ip(&headers, peer_addr).unwrap();
+        assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(203, 0, 113, 195)));
     }
 
     #[test]
@@ -311,8 +417,8 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "203.0.113.196".parse().unwrap());
         let peer_addr = SocketAddr::from(([127, 0, 0, 1], 12345));
-        let ip = extract_ipv4(&headers, peer_addr).unwrap();
-        assert_eq!(ip, Ipv4Addr::new(203, 0, 113, 196));
+        let ip = extract_ip(&headers, peer_addr).unwrap();
+        assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(203, 0, 113, 196)));
     }
 
     #[test]
@@ -323,20 +429,19 @@ mod tests {
             IpAddr::V6("::ffff:192.168.1.50".parse().unwrap()),
             12345,
         );
-        let ip = extract_ipv4(&headers, v6_mapped).unwrap();
-        assert_eq!(ip, Ipv4Addr::new(192, 168, 1, 50));
+        let ip = extract_ip(&headers, v6_mapped).unwrap();
+        assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)));
     }
 
     #[test]
-    fn test_extract_ipv4_v6_unmapped_fails() {
+    fn test_extract_ip_v6_raw() {
         let headers = HeaderMap::new();
-        let v6_unmapped = SocketAddr::new(
+        let v6_raw = SocketAddr::new(
             IpAddr::V6("2001:db8::1".parse().unwrap()),
             12345,
         );
-        let res = extract_ipv4(&headers, v6_unmapped);
-        assert!(res.is_err());
-        assert_eq!(res.unwrap_err(), "IPv6 not supported");
+        let ip = extract_ip(&headers, v6_raw).unwrap();
+        assert_eq!(ip, IpAddr::V6("2001:db8::1".parse().unwrap()));
     }
 }
 
@@ -352,6 +457,8 @@ mod integration_tests {
         let state: Store = Arc::new(AppState {
             store: DashMap::new(),
             waiters: DashMap::new(),
+            cleanup_running: std::sync::atomic::AtomicBool::new(false),
+            rate_limits: DashMap::new(),
         });
         let app = Router::new()
             .route("/pub/:ch/:fp/:port", get(handle_pub))
@@ -476,5 +583,24 @@ mod integration_tests {
         let (status, body) =
             http_get(port, &format!("/pub/{ch}/{fp}/0")).await;
         assert_eq!(status, 400, "port 0: {body}");
+    }
+
+    // ── Rate Limiting test ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn relay_rate_limiting() {
+        let port = spawn_relay().await;
+        let ch = "c".repeat(32);
+        let fp = "f".repeat(64);
+
+        // 1. Perform 30 requests. They should not get HTTP 429.
+        for _ in 0..30 {
+            let (status, _) = http_get(port, &format!("/pub/{ch}/{fp}/9000")).await;
+            assert_eq!(status, 200);
+        }
+
+        // 2. The 31st request should be rejected with 429.
+        let (status, body) = http_get(port, &format!("/pub/{ch}/{fp}/9000")).await;
+        assert_eq!(status, 429, "Expected HTTP 429, got {status} ({body})");
     }
 }

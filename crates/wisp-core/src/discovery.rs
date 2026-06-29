@@ -64,12 +64,21 @@ pub fn advertise(code: &str, ip: Ipv4Addr, port: u16, fingerprint_hex: &str) -> 
 pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
     let ch_expected = crate::code_commitment(code);
     let daemon = ServiceDaemon::new().context("starting mDNS daemon")?;
+    
+    struct DaemonGuard(ServiceDaemon);
+    impl Drop for DaemonGuard {
+        fn drop(&mut self) {
+            let _ = self.0.shutdown();
+        }
+    }
+    let _guard = DaemonGuard(daemon.clone());
+
     let receiver = daemon
         .browse(SERVICE_TYPE)
         .context("starting mDNS browse")?;
     let deadline = Instant::now() + timeout;
 
-    let res = (|| loop {
+    loop {
         let remaining = deadline
             .checked_duration_since(Instant::now())
             .ok_or_else(|| anyhow!("no sender found for code `{code}` on the local network"))?;
@@ -106,10 +115,7 @@ pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
                 ))
             }
         }
-    })();
-
-    let _ = daemon.shutdown();
-    res
+    }
 }
 
 fn parse_fingerprint(info: &ServiceInfo) -> Result<[u8; 32]> {

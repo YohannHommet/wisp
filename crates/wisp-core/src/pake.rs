@@ -27,6 +27,7 @@ pub async fn sender_handshake(
     code: &str,
     send: &mut SendStream,
     recv: &mut RecvStream,
+    tls_unique: &[u8; 32],
 ) -> Result<()> {
     let (state, msg_a) = Spake2::<Ed25519Group>::start_a(
         &Password::new(code.as_bytes()),
@@ -43,11 +44,11 @@ pub async fn sender_handshake(
         .map_err(|e| anyhow!("PAKE key derivation failed: {:?}", e))?;
 
     // Send our confirmation, then verify theirs.
-    send.write_all(&mac(&key, b"wisp:confirm:a")).await?;
+    send.write_all(&mac(&key, b"wisp:confirm:a", tls_unique)).await?;
 
     let mut got_b = [0u8; 32];
     recv.read_exact(&mut got_b).await?;
-    if got_b.ct_eq(&mac(&key, b"wisp:confirm:b")).unwrap_u8() == 0 {
+    if got_b.ct_eq(&mac(&key, b"wisp:confirm:b", tls_unique)).unwrap_u8() == 0 {
         return Err(anyhow!(
             "authentication failed — wrong code or active network attack"
         ));
@@ -61,6 +62,7 @@ pub async fn receiver_handshake(
     code: &str,
     send: &mut SendStream,
     recv: &mut RecvStream,
+    tls_unique: &[u8; 32],
 ) -> Result<()> {
     let (state, msg_b) = Spake2::<Ed25519Group>::start_b(
         &Password::new(code.as_bytes()),
@@ -79,22 +81,25 @@ pub async fn receiver_handshake(
     // Verify sender's confirmation, then send ours.
     let mut got_a = [0u8; 32];
     recv.read_exact(&mut got_a).await?;
-    if got_a.ct_eq(&mac(&key, b"wisp:confirm:a")).unwrap_u8() == 0 {
+    if got_a.ct_eq(&mac(&key, b"wisp:confirm:a", tls_unique)).unwrap_u8() == 0 {
         return Err(anyhow!(
             "authentication failed — wrong code or active network attack"
         ));
     }
 
-    send.write_all(&mac(&key, b"wisp:confirm:b")).await?;
+    send.write_all(&mac(&key, b"wisp:confirm:b", tls_unique)).await?;
 
     Ok(())
 }
 
-fn mac(key: &[u8], label: &[u8]) -> [u8; 32] {
+fn mac(key: &[u8], label: &[u8], tls_unique: &[u8; 32]) -> [u8; 32] {
     let mut k = [0u8; 32];
     let len = key.len().min(32);
     k[..len].copy_from_slice(&key[..len]);
-    *blake3::keyed_hash(&k, label).as_bytes()
+    let mut hasher = blake3::Hasher::new_keyed(&k);
+    hasher.update(label);
+    hasher.update(tls_unique);
+    *hasher.finalize().as_bytes()
 }
 
 async fn write_frame(send: &mut SendStream, msg: &[u8]) -> Result<()> {
@@ -123,29 +128,33 @@ mod tests {
     #[test]
     fn mac_is_deterministic_and_32_bytes() {
         let key = [0xabu8; 64];
-        let out = mac(&key, b"wisp:confirm:a");
+        let dummy = [0u8; 32];
+        let out = mac(&key, b"wisp:confirm:a", &dummy);
         assert_eq!(out.len(), 32);
-        assert_eq!(out, mac(&key, b"wisp:confirm:a"));
+        assert_eq!(out, mac(&key, b"wisp:confirm:a", &dummy));
     }
 
     #[test]
     fn mac_differs_by_label() {
         let key = [0x01u8; 64];
-        assert_ne!(mac(&key, b"wisp:confirm:a"), mac(&key, b"wisp:confirm:b"));
+        let dummy = [0u8; 32];
+        assert_ne!(mac(&key, b"wisp:confirm:a", &dummy), mac(&key, b"wisp:confirm:b", &dummy));
     }
 
     #[test]
     fn mac_differs_by_key() {
         let key_a = [0x01u8; 64];
         let key_b = [0x02u8; 64];
-        assert_ne!(mac(&key_a, b"wisp:confirm:a"), mac(&key_b, b"wisp:confirm:a"));
+        let dummy = [0u8; 32];
+        assert_ne!(mac(&key_a, b"wisp:confirm:a", &dummy), mac(&key_b, b"wisp:confirm:a", &dummy));
     }
 
     #[test]
     fn ct_eq_correct_vs_wrong() {
         let key = [0xffu8; 64];
         let label = b"wisp:confirm:a";
-        let correct = mac(&key, label);
+        let dummy = [0u8; 32];
+        let correct = mac(&key, label, &dummy);
         let mut wrong = correct;
         wrong[0] ^= 1;
         assert_eq!(correct.ct_eq(&correct).unwrap_u8(), 1);

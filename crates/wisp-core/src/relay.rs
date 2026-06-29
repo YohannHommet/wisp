@@ -6,13 +6,11 @@
 //! the pairing code. An attacker who corrupts the relay response cannot complete
 //! the PAKE or pass the fingerprint check.
 
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 
 const RELAY_TIMEOUT: Duration = Duration::from_secs(35);
 
@@ -30,10 +28,10 @@ struct FindResp {
 
 /// Register this transfer with the relay. Returns the observed public IP.
 ///
-/// `relay_host` — e.g. `relay.example.com:7777` (no scheme)
-pub async fn announce(relay_host: &str, ch: &str, fp_hex: &str, port: u16) -> Result<Ipv4Addr> {
+/// `relay_url` — e.g. `https://relay.example.com:7777` or just `relay.example.com:7777`
+pub async fn announce(relay_url: &str, ch: &str, fp_hex: &str, port: u16) -> Result<IpAddr> {
     let path = format!("/pub/{ch}/{fp_hex}/{port}");
-    let body = http_get(relay_host, &path)
+    let body = http_get(relay_url, &path)
         .await
         .context("relay announce failed")?;
     let resp: AnnounceResp =
@@ -46,14 +44,14 @@ pub async fn announce(relay_host: &str, ch: &str, fp_hex: &str, port: u16) -> Re
 /// Look up a sender by code. Waits up to 30 s for the sender to appear.
 ///
 /// Returns `(public_ip, port, fingerprint)`.
-pub async fn find_wan(relay_host: &str, code: &str) -> Result<(Ipv4Addr, u16, [u8; 32])> {
+pub async fn find_wan(relay_url: &str, code: &str) -> Result<(IpAddr, u16, [u8; 32])> {
     let ch = crate::code_commitment(code);
     let path = format!("/sub/{ch}");
-    let body = http_get(relay_host, &path)
+    let body = http_get(relay_url, &path)
         .await
         .context("relay find failed")?;
     let resp: FindResp = serde_json::from_str(&body).context("parsing relay find response")?;
-    let ip: Ipv4Addr = resp.ip.parse().context("parsing sender IP")?;
+    let ip: IpAddr = resp.ip.parse().context("parsing sender IP")?;
     let fp_vec = hex::decode(&resp.fp).context("decoding fingerprint from relay")?;
     let fingerprint: [u8; 32] = fp_vec
         .as_slice()
@@ -62,38 +60,32 @@ pub async fn find_wan(relay_host: &str, code: &str) -> Result<(Ipv4Addr, u16, [u
     Ok((ip, resp.port, fingerprint))
 }
 
-/// Minimal HTTP/1.0 GET — reads the full response body after a 200 OK.
-async fn http_get(host: &str, path: &str) -> Result<String> {
-    let mut stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(host))
-        .await
-        .context("relay connection timed out")?
-        .with_context(|| format!("connecting to relay {host}"))?;
-
-    let req = format!("GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n");
-    stream.write_all(req.as_bytes()).await?;
-
-    let mut buf = Vec::new();
-    tokio::time::timeout(RELAY_TIMEOUT, stream.take(64 * 1024).read_to_end(&mut buf))
-        .await
-        .context("relay response timed out")??;
-
-    let raw = String::from_utf8_lossy(&buf);
-    let status_line = raw.lines().next().unwrap_or("");
-
-    let body = if let Some(idx) = raw.find("\r\n\r\n") {
-        &raw[idx + 4..]
-    } else if let Some(idx) = raw.find("\n\n") {
-        &raw[idx + 2..]
+/// Minimal HTTPS client using reqwest
+async fn http_get(relay_url_or_host: &str, path: &str) -> Result<String> {
+    let url = if relay_url_or_host.starts_with("http://") || relay_url_or_host.starts_with("https://") {
+        format!("{}{}", relay_url_or_host.trim_end_matches('/'), path)
     } else {
-        ""
+        format!("https://{}{}", relay_url_or_host.trim_end_matches('/'), path)
     };
-    let body = body.trim().to_string();
 
-    if status_line.split_whitespace().nth(1) != Some("200") {
+    let client = reqwest::Client::builder()
+        .timeout(RELAY_TIMEOUT)
+        .build()
+        .context("building HTTP client")?;
+
+    let resp = client.get(&url)
+        .send()
+        .await
+        .with_context(|| format!("HTTP GET request to {url} failed"))?;
+
+    let status = resp.status();
+    let body = resp.text().await.context("reading response body")?;
+
+    if !status.is_success() {
         let err_msg = serde_json::from_str::<serde_json::Value>(&body)
             .ok()
             .and_then(|v| v["error"].as_str().map(String::from))
-            .unwrap_or_else(|| status_line.to_string());
+            .unwrap_or_else(|| format!("HTTP status {status}"));
         return Err(anyhow!("relay: {err_msg}"));
     }
 

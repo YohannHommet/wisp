@@ -78,9 +78,8 @@ pub async fn send_file(
     // _advert keeps the mDNS registration alive until we drop it after the transfer.
     let _advert;
     if let Some(ref url) = relay_url {
-        let host = relay::strip_scheme(url);
         let ch = crate::code_commitment(&code);
-        let observed_ip = relay::announce(host, &ch, &fp_hex, port)
+        let observed_ip = relay::announce(url, &ch, &fp_hex, port)
             .await
             .context("relay announce")?;
         _advert = None::<discovery::Advert>;
@@ -100,7 +99,11 @@ pub async fn send_file(
 
     let (mut send, mut recv) = conn.accept_bi().await.context("accepting stream")?;
 
-    sender_protocol(&code, &path, &name, size, &hash, &mut send, &mut recv).await?;
+    let mut tls_unique = [0u8; 32];
+    conn.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[])
+        .map_err(|e| anyhow!("failed to export TLS channel binding: {:?}", e))?;
+
+    sender_protocol(&code, &path, &name, size, &hash, &mut send, &mut recv, &tls_unique).await?;
 
     // Give the receiver up to POST_SEND_TIMEOUT to close the connection gracefully.
     // If it crashes or stalls we still move on and report success — the file was sent.
@@ -117,9 +120,8 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
 
     // Discovery: LAN (mDNS) or WAN (relay).
     let (peer_ip, peer_port, fingerprint) = if let Some(ref url) = relay_url {
-        let host = relay::strip_scheme(url);
         println!("  querying relay for `{code}`…");
-        let (ip, port, fp) = relay::find_wan(host, &code).await.context("relay lookup")?;
+        let (ip, port, fp) = relay::find_wan(url, &code).await.context("relay lookup")?;
         (ip, port, fp)
     } else {
         println!("  searching for `{code}` on the local network…");
@@ -129,7 +131,7 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
         })
         .await
         .context("discovery task")??;
-        (resolved.addr, resolved.port, resolved.fingerprint)
+        (IpAddr::V4(resolved.addr), resolved.port, resolved.fingerprint)
     };
 
     let client_config = transport::make_client_config(fingerprint)?;
@@ -137,7 +139,7 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
         .context("starting QUIC client")?;
     endpoint.set_default_client_config(client_config);
 
-    let server_addr = SocketAddr::new(IpAddr::V4(peer_ip), peer_port);
+    let server_addr = SocketAddr::new(peer_ip, peer_port);
     let connecting = endpoint
         .connect(server_addr, "wisp")
         .context("initiating connection")?;
@@ -151,8 +153,12 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
         .context("timed out opening QUIC stream")?
         .context("opening stream")?;
 
+    let mut tls_unique = [0u8; 32];
+    conn.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[])
+        .map_err(|e| anyhow!("failed to export TLS channel binding: {:?}", e))?;
+
     let (final_path, size) =
-        receiver_protocol(&code, &dir, &mut send, &mut recv).await?;
+        receiver_protocol(&code, &dir, &mut send, &mut recv, &tls_unique).await?;
 
     conn.close(0u32.into(), b"done");
     endpoint.wait_idle().await;
@@ -178,14 +184,16 @@ async fn sender_protocol(
     hash: &str,
     send: &mut SendStream,
     recv: &mut RecvStream,
+    tls_unique: &[u8; 32],
 ) -> Result<()> {
-    tokio::time::timeout(PAKE_TIMEOUT, pake::sender_handshake(code, send, recv))
+    tokio::time::timeout(PAKE_TIMEOUT, pake::sender_handshake(code, send, recv, tls_unique))
         .await
         .context("PAKE handshake timed out")?
         .context("PAKE handshake failed")?;
 
-    recv.read_to_end(16)
+    tokio::time::timeout(Duration::from_secs(10), recv.read_to_end(16))
         .await
+        .context("receiver ready signal timed out")?
         .context("waiting for receiver ready signal")?;
 
     let meta = FileMeta {
@@ -194,8 +202,13 @@ async fn sender_protocol(
         hash: hash.to_string(),
     };
     let json = serde_json::to_vec(&meta)?;
-    send.write_all(&(json.len() as u32).to_be_bytes()).await?;
-    send.write_all(&json).await?;
+    tokio::time::timeout(CHUNK_TIMEOUT, async {
+        send.write_all(&(json.len() as u32).to_be_bytes()).await?;
+        send.write_all(&json).await?;
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    .context("metadata write stalled")??;
 
     let pb = progress(size, "  ↗ sending  ");
     let mut file = File::open(path).await?;
@@ -206,7 +219,10 @@ async fn sender_protocol(
         if n == 0 {
             break;
         }
-        send.write_all(&buf[..n]).await?;
+        tokio::time::timeout(CHUNK_TIMEOUT, send.write_all(&buf[..n]))
+            .await
+            .context("chunk write stalled")?
+            .context("writing chunk")?;
         sent += n as u64;
         pb.set_position(sent);
     }
@@ -224,8 +240,9 @@ async fn receiver_protocol(
     dir: &Path,
     send: &mut SendStream,
     recv: &mut RecvStream,
+    tls_unique: &[u8; 32],
 ) -> Result<(PathBuf, u64)> {
-    tokio::time::timeout(PAKE_TIMEOUT, pake::receiver_handshake(code, send, recv))
+    tokio::time::timeout(PAKE_TIMEOUT, pake::receiver_handshake(code, send, recv, tls_unique))
         .await
         .context("PAKE handshake timed out")?
         .context("PAKE handshake failed")?;
@@ -234,16 +251,18 @@ async fn receiver_protocol(
     send.finish().context("finishing request")?;
 
     let mut len_buf = [0u8; 4];
-    recv.read_exact(&mut len_buf)
+    tokio::time::timeout(CHUNK_TIMEOUT, recv.read_exact(&mut len_buf))
         .await
+        .context("metadata length read stalled")?
         .context("reading metadata length")?;
     let meta_len = u32::from_be_bytes(len_buf) as usize;
     if meta_len == 0 || meta_len > MAX_META {
         return Err(anyhow!("invalid metadata length: {meta_len}"));
     }
     let mut meta_buf = vec![0u8; meta_len];
-    recv.read_exact(&mut meta_buf)
+    tokio::time::timeout(CHUNK_TIMEOUT, recv.read_exact(&mut meta_buf))
         .await
+        .context("metadata read stalled")?
         .context("reading metadata")?;
     let meta: FileMeta = serde_json::from_slice(&meta_buf).context("parsing metadata")?;
 
@@ -255,7 +274,7 @@ async fn receiver_protocol(
     }
 
     let safe = sanitize(&meta.name);
-    let final_path = unique_path(dir, &safe);
+    let final_path = unique_path(dir, &safe).await;
     let part_path = with_part_suffix(&final_path);
     let file_size = meta.size;
 
@@ -337,28 +356,49 @@ fn sanitize(name: &str) -> String {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "file".into());
-    let cleaned: String = base
+    let trimmed = base.trim_matches('.').to_string();
+    if trimmed.is_empty() {
+        return "file".into();
+    }
+    // 1. Blacklist characters forbidden on Windows and Unix:
+    // Windows: \ : * ? " < > |
+    // Unix: / \0
+    let cleaned: String = trimmed
         .chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
-            } else {
+            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0') {
                 '_'
+            } else {
+                c
             }
         })
         .collect();
-    let trimmed = cleaned.trim_matches('.').to_string();
-    if trimmed.is_empty() {
-        "file".into()
+    
+    // 2. Windows reserved file names case-insensitive check (also handles extensions like nul.txt)
+    let stem = Path::new(&cleaned)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_ascii_uppercase())
+        .unwrap_or_default();
+    
+    let is_reserved = matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9" | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+    );
+
+    let mut final_name = if is_reserved {
+        format!("{cleaned}_")
     } else {
-        trimmed.chars().take(200).collect()
-    }
+        cleaned
+    };
+
+    final_name.truncate(200);
+    final_name
 }
 
-fn unique_path(dir: &Path, name: &str) -> PathBuf {
+async fn unique_path(dir: &Path, name: &str) -> PathBuf {
     let mut candidate = dir.join(name);
     let mut i = 1;
-    while candidate.exists() {
+    while tokio::fs::try_exists(&candidate).await.unwrap_or(false) {
         let stem = Path::new(name)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -431,7 +471,7 @@ fn print_send_banner_wan(
     code: &str,
     name: &str,
     size: u64,
-    observed_ip: Ipv4Addr,
+    observed_ip: IpAddr,
     port: u16,
     hash: &str,
     relay_url: &str,
@@ -457,11 +497,6 @@ mod tests {
     use tempfile::TempDir;
 
     /// Establish a loopback QUIC connection pair.
-    ///
-    /// Both `Connection` objects are returned so the caller can hold them for
-    /// the full test lifetime. `Connection` is reference-counted: clones passed
-    /// to spawned tasks keep a shared reference, and the connection only closes
-    /// when every handle (including the caller's originals) is dropped.
     async fn quic_loopback() -> (quinn::Connection, quinn::Connection) {
         let setup = crate::transport::make_server_config().unwrap();
         let fingerprint = setup.fingerprint;
@@ -515,7 +550,9 @@ mod tests {
             let sc = server_conn.clone();
             async move {
                 let (mut s, mut r) = sc.accept_bi().await.unwrap();
-                sender_protocol("99-wisp-test", &src2, "hello.txt", size, &hash2, &mut s, &mut r)
+                let mut tls_unique = [0u8; 32];
+                sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
+                sender_protocol("99-wisp-test", &src2, "hello.txt", size, &hash2, &mut s, &mut r, &tls_unique)
                     .await
             }
         });
@@ -525,7 +562,9 @@ mod tests {
             let cc = client_conn.clone();
             async move {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
-                receiver_protocol("99-wisp-test", &dst, &mut s, &mut r).await
+                let mut tls_unique = [0u8; 32];
+                cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
+                receiver_protocol("99-wisp-test", &dst, &mut s, &mut r, &tls_unique).await
             }
         });
 
@@ -553,7 +592,9 @@ mod tests {
             let sc = server_conn.clone();
             async move {
                 let (mut s, mut r) = sc.accept_bi().await.unwrap();
-                sender_protocol("correct-code", &src, "data.bin", size, &hash, &mut s, &mut r)
+                let mut tls_unique = [0u8; 32];
+                sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
+                sender_protocol("correct-code", &src, "data.bin", size, &hash, &mut s, &mut r, &tls_unique)
                     .await
             }
         });
@@ -563,7 +604,9 @@ mod tests {
             let cc = client_conn.clone();
             async move {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
-                receiver_protocol("wrong-code", &dst, &mut s, &mut r).await
+                let mut tls_unique = [0u8; 32];
+                cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
+                receiver_protocol("wrong-code", &dst, &mut s, &mut r, &tls_unique).await
             }
         });
 
@@ -594,7 +637,9 @@ mod tests {
             let sc = server_conn.clone();
             async move {
                 let (mut s, mut r) = sc.accept_bi().await.unwrap();
-                sender_protocol("42-large-test", &src2, "large.bin", size, &hash2, &mut s, &mut r)
+                let mut tls_unique = [0u8; 32];
+                sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
+                sender_protocol("42-large-test", &src2, "large.bin", size, &hash2, &mut s, &mut r, &tls_unique)
                     .await
             }
         });
@@ -604,7 +649,9 @@ mod tests {
             let cc = client_conn.clone();
             async move {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
-                receiver_protocol("42-large-test", &dst, &mut s, &mut r).await
+                let mut tls_unique = [0u8; 32];
+                cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
+                receiver_protocol("42-large-test", &dst, &mut s, &mut r, &tls_unique).await
             }
         });
 
@@ -639,9 +686,11 @@ mod tests {
             let sc = server_conn.clone();
             async move {
                 let (mut s, mut r) = sc.accept_bi().await.unwrap();
+                let mut tls_unique = [0u8; 32];
+                sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
                 tokio::time::timeout(
                     PAKE_TIMEOUT,
-                    pake::sender_handshake("same-code", &mut s, &mut r),
+                    pake::sender_handshake("same-code", &mut s, &mut r, &tls_unique),
                 )
                 .await
                 .unwrap()
@@ -665,7 +714,9 @@ mod tests {
             let cc = client_conn.clone();
             async move {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
-                receiver_protocol("same-code", &dst, &mut s, &mut r).await
+                let mut tls_unique = [0u8; 32];
+                cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
+                receiver_protocol("same-code", &dst, &mut s, &mut r, &tls_unique).await
             }
         });
 
@@ -701,9 +752,11 @@ mod tests {
             let sc = server_conn.clone();
             async move {
                 let (mut s, mut r) = sc.accept_bi().await.unwrap();
+                let mut tls_unique = [0u8; 32];
+                sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
                 tokio::time::timeout(
                     PAKE_TIMEOUT,
-                    pake::sender_handshake("size-test", &mut s, &mut r),
+                    pake::sender_handshake("size-test", &mut s, &mut r, &tls_unique),
                 )
                 .await
                 .unwrap()
@@ -726,7 +779,9 @@ mod tests {
             let cc = client_conn.clone();
             async move {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
-                receiver_protocol("size-test", &dst, &mut s, &mut r).await
+                let mut tls_unique = [0u8; 32];
+                cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
+                receiver_protocol("size-test", &dst, &mut s, &mut r, &tls_unique).await
             }
         });
 

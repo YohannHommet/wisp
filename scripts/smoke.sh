@@ -5,20 +5,23 @@
 #   bash scripts/smoke.sh             # debug build, fast tests
 #   bash scripts/smoke.sh --release   # release build
 #   bash scripts/smoke.sh --slow      # also run slow tests (20s+ each)
+#   bash scripts/smoke.sh --verbose   # show wisp output live (useful for debugging)
 #   WISP=./my-wisp bash scripts/smoke.sh
 
 set -uo pipefail
 
 # ── flags ────────────────────────────────────────────────────────────────────
-RELEASE=0; SLOW=0
+RELEASE=0; SLOW=0; VERBOSE=0
 for arg in "$@"; do
   case "$arg" in
     --release) RELEASE=1 ;;
     --slow)    SLOW=1 ;;
+    --verbose) VERBOSE=1 ;;
     -h|--help)
-      echo "Usage: $0 [--release] [--slow]"
+      echo "Usage: $0 [--release] [--slow] [--verbose]"
       echo "  --release   use release binaries"
       echo "  --slow      include tests with long timeouts"
+      echo "  --verbose   show wisp output live (good for debugging)"
       exit 0 ;;
   esac
 done
@@ -62,6 +65,9 @@ fail()    { printf "${CLR_R}  ✗${CLR_N}  %s\n" "$1"; ((FAIL++)); }
 skip()    { printf "${CLR_Y}  ○${CLR_N}  %s ${CLR_D}(skipped)${CLR_N}\n" "$1"; ((SKIP++)); }
 section() { printf "\n${CLR_B}▸ %s${CLR_N}\n" "$1"; }
 
+# Redirect: silent in normal mode, live in --verbose
+Q() { if [ $VERBOSE -eq 1 ]; then "$@"; else "$@" >/dev/null 2>&1; fi; }
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 # Poll file for regex; timeout = N * 0.1s (default 150 = 15s)
@@ -77,7 +83,11 @@ wait_for() {
 # Start sender in background; sets SPID and CODE. Extra args forwarded.
 launch_sender() {
   local src="$1" out="$2"; shift 2
-  "$WISP" send "$src" "$@" >"$out" 2>/dev/null &
+  if [ $VERBOSE -eq 1 ]; then
+    "$WISP" send "$src" "$@" | tee "$out" &
+  else
+    "$WISP" send "$src" "$@" >"$out" 2>/dev/null &
+  fi
   SPID=$!
   if ! wait_for "$out" 'wisp recv' 150; then
     fail "sender: pairing code not printed within 15s"
@@ -116,7 +126,7 @@ t=$SECONDS
 TD=$(mktemp -d "$WORK/XXXXXX"); src="$TD/hello.txt"; dst="$TD/recv"
 printf 'hello wisp smoke test!\n%.0s' {1..80} >"$src"
 if launch_sender "$src" "$TD/s.out"; then
-  if "$WISP" recv "$CODE" --dir "$dst" >/dev/null 2>&1 && cmp -s "$src" "$dst/hello.txt"; then
+  if Q "$WISP" recv "$CODE" --dir "$dst" && cmp -s "$src" "$dst/hello.txt"; then
     ok "small text file — byte-exact" $((SECONDS - t))
   else
     fail "small file (transfer failed or content mismatch)"
@@ -129,7 +139,7 @@ t=$SECONDS
 TD=$(mktemp -d "$WORK/XXXXXX"); src="$TD/big.bin"; dst="$TD/recv"
 dd if=/dev/urandom bs=1024 count=5120 of="$src" 2>/dev/null
 if launch_sender "$src" "$TD/s.out"; then
-  if "$WISP" recv "$CODE" --dir "$dst" >/dev/null 2>&1 && cmp -s "$src" "$dst/big.bin"; then
+  if Q "$WISP" recv "$CODE" --dir "$dst" && cmp -s "$src" "$dst/big.bin"; then
     ok "5 MiB binary — BLAKE3 verified + byte-exact" $((SECONDS - t))
   else
     fail "5 MiB binary (transfer failed or content mismatch)"
@@ -142,7 +152,7 @@ t=$SECONDS
 TD=$(mktemp -d "$WORK/XXXXXX"); src="$TD/original.dat"; dst="$TD/recv"
 echo "custom name test" >"$src"
 if launch_sender "$src" "$TD/s.out" --name "renamed.dat"; then
-  if "$WISP" recv "$CODE" --dir "$dst" >/dev/null 2>&1 && [ -f "$dst/renamed.dat" ]; then
+  if Q "$WISP" recv "$CODE" --dir "$dst" && [ -f "$dst/renamed.dat" ]; then
     ok "--name flag — file received as 'renamed.dat'" $((SECONDS - t))
   else
     fail "--name flag (file not renamed or transfer failed)"
@@ -155,7 +165,7 @@ t=$SECONDS
 TD=$(mktemp -d "$WORK/XXXXXX"); src="$TD/data.txt"; dst="$TD/recv"
 mkdir -p "$dst"; echo "pre-existing" >"$dst/data.txt"; echo "new version" >"$src"
 if launch_sender "$src" "$TD/s.out"; then
-  if "$WISP" recv "$CODE" --dir "$dst" >/dev/null 2>&1 && [ -f "$dst/data (1).txt" ]; then
+  if Q "$WISP" recv "$CODE" --dir "$dst" && [ -f "$dst/data (1).txt" ]; then
     ok "filename collision → 'data (1).txt'" $((SECONDS - t))
   else
     fail "filename collision (expected 'data (1).txt' in $dst)"
@@ -168,7 +178,7 @@ t=$SECONDS
 TD=$(mktemp -d "$WORK/XXXXXX"); src="$TD/safe.txt"; dst="$TD/recv"
 echo "traversal test" >"$src"
 if launch_sender "$src" "$TD/s.out" --name "../../evil.txt"; then
-  "$WISP" recv "$CODE" --dir "$dst" >/dev/null 2>&1 || true
+  Q "$WISP" recv "$CODE" --dir "$dst" || true
   # sanitize() strips path components; evil.txt must land inside $dst only
   if [ -f "$dst/evil.txt" ] && [ ! -f "$TD/evil.txt" ] && [ ! -f "$REPO_ROOT/evil.txt" ]; then
     ok "path-traversal display name → 'evil.txt' confined to dst" $((SECONDS - t))
@@ -198,7 +208,7 @@ TD=$(mktemp -d "$WORK/XXXXXX"); src="$TD/medium.bin"; dst="$TD/recv"; mkdir -p "
 # 50 MiB — large enough to still be in-flight when we interrupt
 dd if=/dev/urandom bs=1024 count=51200 of="$src" 2>/dev/null
 if launch_sender "$src" "$TD/s.out"; then
-  "$WISP" recv "$CODE" --dir "$dst" >/dev/null 2>&1 &
+  Q "$WISP" recv "$CODE" --dir "$dst" &
   recv_pid=$!
   # Wait until receiver has started writing (part file appears) — confirms QUIC connected
   for _ in {1..100}; do
@@ -235,7 +245,7 @@ else
   TD=$(mktemp -d "$WORK/XXXXXX"); src="$TD/wan.txt"; dst="$TD/recv"
   printf 'WAN relay transfer line\n%.0s' {1..100} >"$src"
   if launch_sender "$src" "$TD/s.out" --relay "$RELAY_URL"; then
-    if "$WISP" recv "$CODE" --relay "$RELAY_URL" --dir "$dst" >/dev/null 2>&1 \
+    if Q "$WISP" recv "$CODE" --relay "$RELAY_URL" --dir "$dst" \
         && cmp -s "$src" "$dst/wan.txt"; then
       ok "WAN relay transfer — byte-exact" $((SECONDS - t))
     else
@@ -279,7 +289,7 @@ if [ $SLOW -eq 1 ]; then
   t=$SECONDS
   TD=$(mktemp -d "$WORK/XXXXXX"); dst="$TD/recv"; mkdir -p "$dst"
   printf "  (waiting up to 20s for mDNS discovery timeout…)\n"
-  "$WISP" recv "zz-does-not-exist-smoke" --dir "$dst" >/dev/null 2>&1; rc=$?
+  Q "$WISP" recv "zz-does-not-exist-smoke" --dir "$dst"; rc=$?
   received=$(find "$dst" -maxdepth 1 -type f 2>/dev/null | wc -l)
   if (( rc != 0 )) && (( received == 0 )); then
     ok "wrong code → non-zero exit, nothing written" $((SECONDS - t))

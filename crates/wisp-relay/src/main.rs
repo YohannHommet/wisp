@@ -227,3 +227,142 @@ mod tests {
         assert!(!valid_hex(&" ".repeat(32), 32));
     }
 }
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    /// Spin up a real axum relay on a random loopback port. Returns the port.
+    async fn spawn_relay() -> u16 {
+        let state: Store = Arc::new(AppState {
+            store: DashMap::new(),
+            waiters: DashMap::new(),
+        });
+        let app = Router::new()
+            .route("/pub/:ch/:fp/:port", get(handle_pub))
+            .route("/sub/:ch", get(handle_sub))
+            .with_state(state);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        port
+    }
+
+    /// Make a raw HTTP/1.1 GET and return `(status_code, full_response_text)`.
+    ///
+    /// Sends `Connection: close` so hyper/axum closes after the response —
+    /// allowing `read_to_end` to return without a separate shutdown step.
+    async fn http_get(port: u16, path: &str) -> (u16, String) {
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        let req =
+            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+        stream.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).await.unwrap();
+        let response = String::from_utf8_lossy(&buf).into_owned();
+        let status: u16 = response
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        (status, response)
+    }
+
+    // ── Happy path: pub then sub ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn relay_pub_then_sub() {
+        let port = spawn_relay().await;
+        let ch = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4".to_string(); // 32 hex chars
+        let fp = "f".repeat(64);
+
+        let (pub_status, pub_body) =
+            http_get(port, &format!("/pub/{ch}/{fp}/9999")).await;
+        assert_eq!(pub_status, 200, "pub body: {pub_body}");
+        assert!(pub_body.contains("observed_ip"), "pub body: {pub_body}");
+
+        let (sub_status, sub_body) =
+            http_get(port, &format!("/sub/{ch}")).await;
+        assert_eq!(sub_status, 200, "sub body: {sub_body}");
+        assert!(sub_body.contains("9999"), "sub body should contain port: {sub_body}");
+        assert!(sub_body.contains("fp"), "sub body should contain fp: {sub_body}");
+    }
+
+    // ── Subscriber arrives before sender; must wake quickly ───────────────────
+
+    #[tokio::test]
+    async fn relay_sub_before_pub_wakes_quickly() {
+        let port = spawn_relay().await;
+        let ch = "b".repeat(32);
+        let fp = "e".repeat(64);
+
+        // Launch subscriber first — handle_sub will park on its Notify
+        let ch_for_sub = ch.clone();
+        let sub_task = tokio::spawn(async move {
+            http_get(port, &format!("/sub/{ch_for_sub}")).await
+        });
+
+        // Give the request 100ms to connect and reach handle_sub's Notify park point.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let t0 = Instant::now();
+        // Sender announces — notify_waiters() must wake the parked subscriber
+        http_get(port, &format!("/pub/{ch}/{fp}/8888")).await;
+
+        let (sub_status, sub_body) =
+            tokio::time::timeout(Duration::from_secs(3), sub_task)
+                .await
+                .expect("sub must return quickly after pub announces — not after 30s timeout")
+                .unwrap();
+
+        assert_eq!(sub_status, 200, "sub body: {sub_body}");
+        assert!(sub_body.contains("8888"), "sub body should contain port 8888: {sub_body}");
+        assert!(
+            t0.elapsed() < Duration::from_secs(3),
+            "subscriber must not wait for the full 30s poll timeout"
+        );
+    }
+
+    // ── Malformed inputs must be rejected with 400 ────────────────────────────
+
+    #[tokio::test]
+    async fn relay_invalid_input_rejected() {
+        let port = spawn_relay().await;
+        let ch = "a".repeat(32);
+        let fp = "f".repeat(64);
+
+        // ch too short
+        let (status, body) =
+            http_get(port, &format!("/pub/{}/{fp}/9000", "a".repeat(31))).await;
+        assert_eq!(status, 400, "31-char ch: {body}");
+
+        // ch with non-hex character
+        let (status, body) =
+            http_get(port, &format!("/pub/{}/{fp}/9000", "g".repeat(32))).await;
+        assert_eq!(status, 400, "non-hex ch: {body}");
+
+        // fp too short
+        let (status, body) =
+            http_get(port, &format!("/pub/{ch}/{}/9000", "f".repeat(63))).await;
+        assert_eq!(status, 400, "63-char fp: {body}");
+
+        // port = 0
+        let (status, body) =
+            http_get(port, &format!("/pub/{ch}/{fp}/0")).await;
+        assert_eq!(status, 400, "port 0: {body}");
+    }
+}

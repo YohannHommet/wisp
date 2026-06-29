@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use quinn::Endpoint;
+use quinn::{Endpoint, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -100,40 +100,7 @@ pub async fn send_file(
 
     let (mut send, mut recv) = conn.accept_bi().await.context("accepting stream")?;
 
-    tokio::time::timeout(
-        PAKE_TIMEOUT,
-        pake::sender_handshake(&code, &mut send, &mut recv),
-    )
-    .await
-    .context("PAKE handshake timed out")?
-    .context("PAKE handshake failed")?;
-
-    recv.read_to_end(16).await.context("waiting for receiver ready signal")?;
-
-    let meta = FileMeta {
-        name: name.clone(),
-        size,
-        hash: hash.clone(),
-    };
-    let json = serde_json::to_vec(&meta)?;
-    send.write_all(&(json.len() as u32).to_be_bytes()).await?;
-    send.write_all(&json).await?;
-
-    let pb = progress(size, "  ↗ sending  ");
-    let mut file = File::open(&path).await?;
-    let mut buf = vec![0u8; CHUNK];
-    let mut sent = 0u64;
-    loop {
-        let n = file.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        send.write_all(&buf[..n]).await?;
-        sent += n as u64;
-        pb.set_position(sent);
-    }
-    send.finish().context("finishing stream")?;
-    pb.finish_and_clear();
+    sender_protocol(&code, &path, &name, size, &hash, &mut send, &mut recv).await?;
 
     // Give the receiver up to POST_SEND_TIMEOUT to close the connection gracefully.
     // If it crashes or stalls we still move on and report success — the file was sent.
@@ -184,13 +151,84 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
         .context("timed out opening QUIC stream")?
         .context("opening stream")?;
 
-    tokio::time::timeout(
-        PAKE_TIMEOUT,
-        pake::receiver_handshake(&code, &mut send, &mut recv),
-    )
-    .await
-    .context("PAKE handshake timed out")?
-    .context("PAKE handshake failed")?;
+    let (final_path, size) =
+        receiver_protocol(&code, &dir, &mut send, &mut recv).await?;
+
+    conn.close(0u32.into(), b"done");
+    endpoint.wait_idle().await;
+
+    println!(
+        "  ✓ verified · {} · saved to {}",
+        human(size),
+        final_path.display()
+    );
+    Ok(())
+}
+
+// ===== stream-level protocol (decoupled from discovery and QUIC setup) =====
+
+/// Run the sender side of the protocol on an already-established QUIC stream.
+///
+/// Performs PAKE, waits for the receiver's ready signal, then streams the file.
+async fn sender_protocol(
+    code: &str,
+    path: &Path,
+    name: &str,
+    size: u64,
+    hash: &str,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+) -> Result<()> {
+    tokio::time::timeout(PAKE_TIMEOUT, pake::sender_handshake(code, send, recv))
+        .await
+        .context("PAKE handshake timed out")?
+        .context("PAKE handshake failed")?;
+
+    recv.read_to_end(16)
+        .await
+        .context("waiting for receiver ready signal")?;
+
+    let meta = FileMeta {
+        name: name.to_string(),
+        size,
+        hash: hash.to_string(),
+    };
+    let json = serde_json::to_vec(&meta)?;
+    send.write_all(&(json.len() as u32).to_be_bytes()).await?;
+    send.write_all(&json).await?;
+
+    let pb = progress(size, "  ↗ sending  ");
+    let mut file = File::open(path).await?;
+    let mut buf = vec![0u8; CHUNK];
+    let mut sent = 0u64;
+    loop {
+        let n = file.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        send.write_all(&buf[..n]).await?;
+        sent += n as u64;
+        pb.set_position(sent);
+    }
+    send.finish().context("finishing stream")?;
+    pb.finish_and_clear();
+    Ok(())
+}
+
+/// Run the receiver side of the protocol on an already-established QUIC stream.
+///
+/// Performs PAKE, sends the ready signal, receives and verifies the file.
+/// Returns `(final_path, file_size)` on success.
+async fn receiver_protocol(
+    code: &str,
+    dir: &Path,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+) -> Result<(PathBuf, u64)> {
+    tokio::time::timeout(PAKE_TIMEOUT, pake::receiver_handshake(code, send, recv))
+        .await
+        .context("PAKE handshake timed out")?
+        .context("PAKE handshake failed")?;
 
     send.write_all(b"GET").await?;
     send.finish().context("finishing request")?;
@@ -217,10 +255,11 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
     }
 
     let safe = sanitize(&meta.name);
-    let final_path = unique_path(&dir, &safe);
+    let final_path = unique_path(dir, &safe);
     let part_path = with_part_suffix(&final_path);
+    let file_size = meta.size;
 
-    // Wrap the body receive in an async block so we have a single cleanup point:
+    // Wrap body receive in an async block for a single cleanup site:
     // on any error between File::create and rename, delete the part file.
     let outcome: Result<()> = async {
         let pb = progress(meta.size, "  ↘ receiving");
@@ -252,7 +291,8 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
         let actual = hasher.finalize().to_hex().to_string();
         if received != meta.size || actual != meta.hash {
             return Err(anyhow!(
-                "integrity check FAILED — corrupt or tampered transfer (discarded {} of {} bytes)",
+                "integrity check FAILED — corrupt or tampered transfer \
+                 (discarded {} of {} bytes)",
                 received,
                 meta.size
             ));
@@ -268,18 +308,10 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
 
     if outcome.is_err() {
         let _ = tokio::fs::remove_file(&part_path).await;
-        return outcome;
+        return Err(outcome.unwrap_err());
     }
 
-    conn.close(0u32.into(), b"done");
-    endpoint.wait_idle().await;
-
-    println!(
-        "  ✓ verified · {} · saved to {}",
-        human(meta.size),
-        final_path.display()
-    );
-    Ok(())
+    Ok((final_path, file_size))
 }
 
 // ===== helpers =====
@@ -415,4 +447,296 @@ fn print_send_banner_wan(
     println!("      wisp recv --relay {relay_url} {code}");
     println!();
     println!("  waiting for a receiver…");
+}
+
+// ===== integration tests =====
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Establish a loopback QUIC connection pair.
+    ///
+    /// Both `Connection` objects are returned so the caller can hold them for
+    /// the full test lifetime. `Connection` is reference-counted: clones passed
+    /// to spawned tasks keep a shared reference, and the connection only closes
+    /// when every handle (including the caller's originals) is dropped.
+    async fn quic_loopback() -> (quinn::Connection, quinn::Connection) {
+        let setup = crate::transport::make_server_config().unwrap();
+        let fingerprint = setup.fingerprint;
+        let server_ep = Endpoint::server(
+            setup.config,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        )
+        .unwrap();
+        let port = server_ep.local_addr().unwrap().port();
+
+        tokio::join!(
+            async {
+                let inc = server_ep.accept().await.unwrap();
+                inc.await.unwrap()
+            },
+            async {
+                let cfg = crate::transport::make_client_config(fingerprint).unwrap();
+                let mut ep =
+                    Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))
+                        .unwrap();
+                ep.set_default_client_config(cfg);
+                ep.connect(
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+                    "wisp",
+                )
+                .unwrap()
+                .await
+                .unwrap()
+            }
+        )
+    }
+
+    // ── Happy path ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn transfer_small_file() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        let content = b"hello wisp -- integration test payload";
+        let src = src_dir.path().join("hello.txt");
+        tokio::fs::write(&src, content).await.unwrap();
+        let (hash, size) = hash_file(&src).await.unwrap();
+
+        // Keep originals alive so the connection doesn't close when a task finishes.
+        let (server_conn, client_conn) = quic_loopback().await;
+
+        let src2 = src.clone();
+        let hash2 = hash.clone();
+        let sender = tokio::spawn({
+            let sc = server_conn.clone();
+            async move {
+                let (mut s, mut r) = sc.accept_bi().await.unwrap();
+                sender_protocol("99-wisp-test", &src2, "hello.txt", size, &hash2, &mut s, &mut r)
+                    .await
+            }
+        });
+
+        let dst = dst_dir.path().to_owned();
+        let receiver = tokio::spawn({
+            let cc = client_conn.clone();
+            async move {
+                let (mut s, mut r) = cc.open_bi().await.unwrap();
+                receiver_protocol("99-wisp-test", &dst, &mut s, &mut r).await
+            }
+        });
+
+        sender.await.unwrap().unwrap();
+        let (received_path, received_size) = receiver.await.unwrap().unwrap();
+        assert_eq!(received_size, content.len() as u64);
+        let received = tokio::fs::read(&received_path).await.unwrap();
+        assert_eq!(received, content);
+    }
+
+    // ── Wrong pairing code ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn transfer_wrong_code_fails() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        let src = src_dir.path().join("data.bin");
+        tokio::fs::write(&src, b"secret data").await.unwrap();
+        let (hash, size) = hash_file(&src).await.unwrap();
+
+        let (server_conn, client_conn) = quic_loopback().await;
+
+        let sender = tokio::spawn({
+            let sc = server_conn.clone();
+            async move {
+                let (mut s, mut r) = sc.accept_bi().await.unwrap();
+                sender_protocol("correct-code", &src, "data.bin", size, &hash, &mut s, &mut r)
+                    .await
+            }
+        });
+
+        let dst = dst_dir.path().to_owned();
+        let receiver = tokio::spawn({
+            let cc = client_conn.clone();
+            async move {
+                let (mut s, mut r) = cc.open_bi().await.unwrap();
+                receiver_protocol("wrong-code", &dst, &mut s, &mut r).await
+            }
+        });
+
+        let sender_result = sender.await.unwrap();
+        let receiver_result = receiver.await.unwrap();
+        assert!(sender_result.is_err(), "sender should fail on wrong code");
+        assert!(receiver_result.is_err(), "receiver should fail on wrong code");
+    }
+
+    // ── Large file integrity ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn transfer_large_file_integrity() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        // 2 MiB of deterministic pseudo-random bytes
+        let content: Vec<u8> = (0u32..524_288).flat_map(|i| i.to_le_bytes()).collect();
+        let src = src_dir.path().join("large.bin");
+        tokio::fs::write(&src, &content).await.unwrap();
+        let (hash, size) = hash_file(&src).await.unwrap();
+
+        let (server_conn, client_conn) = quic_loopback().await;
+
+        let src2 = src.clone();
+        let hash2 = hash.clone();
+        let sender = tokio::spawn({
+            let sc = server_conn.clone();
+            async move {
+                let (mut s, mut r) = sc.accept_bi().await.unwrap();
+                sender_protocol("42-large-test", &src2, "large.bin", size, &hash2, &mut s, &mut r)
+                    .await
+            }
+        });
+
+        let dst = dst_dir.path().to_owned();
+        let receiver = tokio::spawn({
+            let cc = client_conn.clone();
+            async move {
+                let (mut s, mut r) = cc.open_bi().await.unwrap();
+                receiver_protocol("42-large-test", &dst, &mut s, &mut r).await
+            }
+        });
+
+        sender.await.unwrap().unwrap();
+        let (received_path, received_size) = receiver.await.unwrap().unwrap();
+        assert_eq!(received_size, size);
+        let received = tokio::fs::read(&received_path).await.unwrap();
+        assert_eq!(
+            blake3::hash(&received).to_hex().to_string(),
+            hash,
+            "BLAKE3 must match after transfer"
+        );
+    }
+
+    // ── Tampered hash → part file cleaned up ─────────────────────────────────
+
+    #[tokio::test]
+    async fn transfer_hash_mismatch_cleans_up_part_file() {
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+
+        let content = b"real file content";
+        let src = src_dir.path().join("file.bin");
+        tokio::fs::write(&src, content).await.unwrap();
+        let (_, size) = hash_file(&src).await.unwrap();
+
+        let (server_conn, client_conn) = quic_loopback().await;
+
+        // Malicious sender: correct PAKE but lying hash in metadata.
+        let content_copy = content.to_vec();
+        let sender = tokio::spawn({
+            let sc = server_conn.clone();
+            async move {
+                let (mut s, mut r) = sc.accept_bi().await.unwrap();
+                tokio::time::timeout(
+                    PAKE_TIMEOUT,
+                    pake::sender_handshake("same-code", &mut s, &mut r),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                r.read_to_end(16).await.unwrap();
+                let meta = FileMeta {
+                    name: "file.bin".to_string(),
+                    size,
+                    hash: "0".repeat(64), // all-zeros — definitely wrong
+                };
+                let json = serde_json::to_vec(&meta).unwrap();
+                s.write_all(&(json.len() as u32).to_be_bytes()).await.unwrap();
+                s.write_all(&json).await.unwrap();
+                s.write_all(&content_copy).await.unwrap();
+                s.finish().unwrap();
+            }
+        });
+
+        let dst = dst_dir.path().to_owned();
+        let receiver = tokio::spawn({
+            let cc = client_conn.clone();
+            async move {
+                let (mut s, mut r) = cc.open_bi().await.unwrap();
+                receiver_protocol("same-code", &dst, &mut s, &mut r).await
+            }
+        });
+
+        // Sender finishes first; server_conn (outer) keeps connection alive for receiver.
+        sender.await.unwrap();
+        let result = receiver.await.unwrap();
+
+        assert!(result.is_err(), "integrity check should have failed");
+        assert!(
+            result.unwrap_err().to_string().contains("integrity check FAILED"),
+            "error should mention integrity"
+        );
+
+        // The .wisp-part file must be gone
+        let leftover: Vec<_> = std::fs::read_dir(dst_dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".wisp-part"))
+            .collect();
+        assert!(leftover.is_empty(), "stale .wisp-part files found: {leftover:?}");
+    }
+
+    // ── File-size cap ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn transfer_size_cap_rejects_oversized_claim() {
+        let dst_dir = TempDir::new().unwrap();
+
+        let (server_conn, client_conn) = quic_loopback().await;
+
+        // Malicious sender claims a file larger than 1 TiB.
+        let sender = tokio::spawn({
+            let sc = server_conn.clone();
+            async move {
+                let (mut s, mut r) = sc.accept_bi().await.unwrap();
+                tokio::time::timeout(
+                    PAKE_TIMEOUT,
+                    pake::sender_handshake("size-test", &mut s, &mut r),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                r.read_to_end(16).await.unwrap();
+                let meta = FileMeta {
+                    name: "huge.bin".to_string(),
+                    size: MAX_FILE_SIZE + 1,
+                    hash: "a".repeat(64),
+                };
+                let json = serde_json::to_vec(&meta).unwrap();
+                s.write_all(&(json.len() as u32).to_be_bytes()).await.unwrap();
+                s.write_all(&json).await.unwrap();
+                s.finish().unwrap();
+            }
+        });
+
+        let dst = dst_dir.path().to_owned();
+        let receiver = tokio::spawn({
+            let cc = client_conn.clone();
+            async move {
+                let (mut s, mut r) = cc.open_bi().await.unwrap();
+                receiver_protocol("size-test", &dst, &mut s, &mut r).await
+            }
+        });
+
+        sender.await.unwrap();
+        let result = receiver.await.unwrap();
+
+        assert!(result.is_err(), "should reject oversized file claim");
+        assert!(
+            result.unwrap_err().to_string().contains("refusing files over 1 TiB"),
+            "error should mention size limit"
+        );
+    }
 }

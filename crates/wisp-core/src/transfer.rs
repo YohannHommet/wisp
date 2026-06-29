@@ -30,10 +30,7 @@ use crate::{discovery, pake, relay, transport};
 const CHUNK: usize = 64 * 1024;
 const MAX_META: usize = 64 * 1024;
 const MAX_FILE_SIZE: u64 = 1_099_511_627_776; // 1 TiB
-const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
-const PAKE_TIMEOUT: Duration = Duration::from_secs(30);
 const QUIC_TIMEOUT: Duration = Duration::from_secs(30);
-const CHUNK_TIMEOUT: Duration = Duration::from_secs(30);
 const POST_SEND_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Serialize, Deserialize)]
@@ -53,6 +50,9 @@ pub async fn send_file(
     if !path.is_file() {
         return Err(anyhow!("not a regular file: {}", path.display()));
     }
+
+    let config = crate::config::Config::load().unwrap_or_default();
+    let timeouts = config.resolve_timeouts();
 
     let name = sanitize(&display_name.unwrap_or_else(|| {
         path.file_name()
@@ -103,7 +103,7 @@ pub async fn send_file(
     conn.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[])
         .map_err(|e| anyhow!("failed to export TLS channel binding: {:?}", e))?;
 
-    sender_protocol(&code, &path, &name, size, &hash, &mut send, &mut recv, &tls_unique).await?;
+    sender_protocol(&code, &path, &name, size, &hash, &mut send, &mut recv, &tls_unique, &timeouts).await?;
 
     // Give the receiver up to POST_SEND_TIMEOUT to close the connection gracefully.
     // If it crashes or stalls we still move on and report success — the file was sent.
@@ -118,6 +118,9 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
         .await
         .with_context(|| format!("creating output directory {}", dir.display()))?;
 
+    let config = crate::config::Config::load().unwrap_or_default();
+    let timeouts = config.resolve_timeouts();
+
     // Discovery: LAN (mDNS) or WAN (relay).
     let (peer_ip, peer_port, fingerprint) = if let Some(ref url) = relay_url {
         println!("  querying relay for `{code}`…");
@@ -127,7 +130,8 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
         println!("  searching for `{code}` on the local network…");
         let resolved = tokio::task::spawn_blocking({
             let code = code.clone();
-            move || discovery::find(&code, DISCOVERY_TIMEOUT)
+            let timeout = timeouts.discovery;
+            move || discovery::find(&code, timeout)
         })
         .await
         .context("discovery task")??;
@@ -158,7 +162,7 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
         .map_err(|e| anyhow!("failed to export TLS channel binding: {:?}", e))?;
 
     let (final_path, size) =
-        receiver_protocol(&code, &dir, &mut send, &mut recv, &tls_unique).await?;
+        receiver_protocol(&code, &dir, &mut send, &mut recv, &tls_unique, &timeouts).await?;
 
     conn.close(0u32.into(), b"done");
     endpoint.wait_idle().await;
@@ -185,8 +189,9 @@ async fn sender_protocol(
     send: &mut SendStream,
     recv: &mut RecvStream,
     tls_unique: &[u8; 32],
+    timeouts: &crate::config::ResolvedTimeouts,
 ) -> Result<()> {
-    tokio::time::timeout(PAKE_TIMEOUT, pake::sender_handshake(code, send, recv, tls_unique))
+    tokio::time::timeout(timeouts.pake, pake::sender_handshake(code, send, recv, tls_unique))
         .await
         .context("PAKE handshake timed out")?
         .context("PAKE handshake failed")?;
@@ -202,7 +207,7 @@ async fn sender_protocol(
         hash: hash.to_string(),
     };
     let json = serde_json::to_vec(&meta)?;
-    tokio::time::timeout(CHUNK_TIMEOUT, async {
+    tokio::time::timeout(timeouts.block_transfer, async {
         send.write_all(&(json.len() as u32).to_be_bytes()).await?;
         send.write_all(&json).await?;
         Ok::<(), anyhow::Error>(())
@@ -219,7 +224,7 @@ async fn sender_protocol(
         if n == 0 {
             break;
         }
-        tokio::time::timeout(CHUNK_TIMEOUT, send.write_all(&buf[..n]))
+        tokio::time::timeout(timeouts.block_transfer, send.write_all(&buf[..n]))
             .await
             .context("chunk write stalled")?
             .context("writing chunk")?;
@@ -241,8 +246,9 @@ async fn receiver_protocol(
     send: &mut SendStream,
     recv: &mut RecvStream,
     tls_unique: &[u8; 32],
+    timeouts: &crate::config::ResolvedTimeouts,
 ) -> Result<(PathBuf, u64)> {
-    tokio::time::timeout(PAKE_TIMEOUT, pake::receiver_handshake(code, send, recv, tls_unique))
+    tokio::time::timeout(timeouts.pake, pake::receiver_handshake(code, send, recv, tls_unique))
         .await
         .context("PAKE handshake timed out")?
         .context("PAKE handshake failed")?;
@@ -251,7 +257,7 @@ async fn receiver_protocol(
     send.finish().context("finishing request")?;
 
     let mut len_buf = [0u8; 4];
-    tokio::time::timeout(CHUNK_TIMEOUT, recv.read_exact(&mut len_buf))
+    tokio::time::timeout(timeouts.block_transfer, recv.read_exact(&mut len_buf))
         .await
         .context("metadata length read stalled")?
         .context("reading metadata length")?;
@@ -260,7 +266,7 @@ async fn receiver_protocol(
         return Err(anyhow!("invalid metadata length: {meta_len}"));
     }
     let mut meta_buf = vec![0u8; meta_len];
-    tokio::time::timeout(CHUNK_TIMEOUT, recv.read_exact(&mut meta_buf))
+    tokio::time::timeout(timeouts.block_transfer, recv.read_exact(&mut meta_buf))
         .await
         .context("metadata read stalled")?
         .context("reading metadata")?;
@@ -290,7 +296,7 @@ async fn receiver_protocol(
         let mut received = 0u64;
 
         while received < meta.size {
-            let chunk = tokio::time::timeout(CHUNK_TIMEOUT, recv.read(&mut buf))
+            let chunk = tokio::time::timeout(timeouts.block_transfer, recv.read(&mut buf))
                 .await
                 .context("stalled: no data received for 30 s")?
                 .context("reading file data")?;
@@ -552,7 +558,7 @@ mod tests {
                 let (mut s, mut r) = sc.accept_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                sender_protocol("99-wisp-test", &src2, "hello.txt", size, &hash2, &mut s, &mut r, &tls_unique)
+                sender_protocol("99-wisp-test", &src2, "hello.txt", size, &hash2, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default())
                     .await
             }
         });
@@ -564,7 +570,7 @@ mod tests {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                receiver_protocol("99-wisp-test", &dst, &mut s, &mut r, &tls_unique).await
+                receiver_protocol("99-wisp-test", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default()).await
             }
         });
 
@@ -594,7 +600,7 @@ mod tests {
                 let (mut s, mut r) = sc.accept_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                sender_protocol("correct-code", &src, "data.bin", size, &hash, &mut s, &mut r, &tls_unique)
+                sender_protocol("correct-code", &src, "data.bin", size, &hash, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default())
                     .await
             }
         });
@@ -606,7 +612,7 @@ mod tests {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                receiver_protocol("wrong-code", &dst, &mut s, &mut r, &tls_unique).await
+                receiver_protocol("wrong-code", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default()).await
             }
         });
 
@@ -639,7 +645,7 @@ mod tests {
                 let (mut s, mut r) = sc.accept_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                sender_protocol("42-large-test", &src2, "large.bin", size, &hash2, &mut s, &mut r, &tls_unique)
+                sender_protocol("42-large-test", &src2, "large.bin", size, &hash2, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default())
                     .await
             }
         });
@@ -651,7 +657,7 @@ mod tests {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                receiver_protocol("42-large-test", &dst, &mut s, &mut r, &tls_unique).await
+                receiver_protocol("42-large-test", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default()).await
             }
         });
 
@@ -689,7 +695,7 @@ mod tests {
                 let mut tls_unique = [0u8; 32];
                 sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
                 tokio::time::timeout(
-                    PAKE_TIMEOUT,
+                    Duration::from_secs(15),
                     pake::sender_handshake("same-code", &mut s, &mut r, &tls_unique),
                 )
                 .await
@@ -716,7 +722,7 @@ mod tests {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                receiver_protocol("same-code", &dst, &mut s, &mut r, &tls_unique).await
+                receiver_protocol("same-code", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default()).await
             }
         });
 
@@ -755,7 +761,7 @@ mod tests {
                 let mut tls_unique = [0u8; 32];
                 sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
                 tokio::time::timeout(
-                    PAKE_TIMEOUT,
+                    Duration::from_secs(15),
                     pake::sender_handshake("size-test", &mut s, &mut r, &tls_unique),
                 )
                 .await
@@ -781,7 +787,7 @@ mod tests {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                receiver_protocol("size-test", &dst, &mut s, &mut r, &tls_unique).await
+                receiver_protocol("size-test", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default()).await
             }
         });
 

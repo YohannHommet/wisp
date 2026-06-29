@@ -12,6 +12,7 @@ pub mod pake;
 pub mod relay;
 pub mod transfer;
 pub mod transport;
+pub mod config;
 
 pub use transfer::{receive_file, send_file};
 

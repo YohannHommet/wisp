@@ -35,8 +35,8 @@ enum Command {
         /// The code from the sender, e.g. `7-tiger-saturn`.
         code: String,
         /// Directory to save the received file into.
-        #[arg(long, short, default_value = ".")]
-        dir: PathBuf,
+        #[arg(long, short)]
+        dir: Option<PathBuf>,
         /// WAN relay URL (must match the one used by the sender).
         #[arg(long, short)]
         relay: Option<String>,
@@ -62,11 +62,22 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
+    let config = wisp_core::config::Config::load().unwrap_or_default();
+
     let result = tokio::select! {
         res = async {
             match cli.command {
-                Command::Send { file, name, relay } => wisp_core::send_file(file, name, relay).await,
-                Command::Recv { code, dir, relay } => wisp_core::receive_file(code, dir, relay).await,
+                Command::Send { file, name, relay } => {
+                    let env_relay = std::env::var("WISP_RELAY").ok();
+                    let final_relay = config.resolve_relay(relay.as_deref(), env_relay.as_deref());
+                    wisp_core::send_file(file, name, final_relay).await
+                }
+                Command::Recv { code, dir, relay } => {
+                    let env_relay = std::env::var("WISP_RELAY").ok();
+                    let final_relay = config.resolve_relay(relay.as_deref(), env_relay.as_deref());
+                    let final_dir = config.resolve_download_dir(dir);
+                    wisp_core::receive_file(code, final_dir, final_relay).await
+                }
             }
         } => res,
         _ = tokio::signal::ctrl_c() => {

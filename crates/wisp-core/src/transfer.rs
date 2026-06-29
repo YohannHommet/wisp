@@ -60,7 +60,7 @@ pub async fn send_file(
             .unwrap_or_else(|| "file".into())
     }));
 
-    eprintln!("  computing BLAKE3 checksum…");
+    eprintln!("  \x1b[90mcomputing BLAKE3 checksum…\x1b[0m");
     let (hash, size) = hash_file(&path).await?;
 
     let setup = transport::make_server_config()?;
@@ -95,7 +95,7 @@ pub async fn send_file(
         .await
         .ok_or_else(|| anyhow!("listener closed before a peer connected"))?;
     let conn = incoming.await.context("accepting connection")?;
-    eprintln!("  ↘ peer connected from {}", conn.remote_address());
+    eprintln!("  \x1b[32m↘ peer connected from {}\x1b[0m", conn.remote_address());
 
     let (mut send, mut recv) = conn.accept_bi().await.context("accepting stream")?;
 
@@ -108,7 +108,7 @@ pub async fn send_file(
     // Give the receiver up to POST_SEND_TIMEOUT to close the connection gracefully.
     // If it crashes or stalls we still move on and report success — the file was sent.
     tokio::time::timeout(POST_SEND_TIMEOUT, conn.closed()).await.ok();
-    println!("  ✓ delivered {name} ({}) — wisp gone.", human(size));
+    println!("  \x1b[32m✓ delivered\x1b[0m {name} ({}) — wisp gone.", human(size));
     Ok(())
 }
 
@@ -123,11 +123,11 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
 
     // Discovery: LAN (mDNS) or WAN (relay).
     let (peer_ip, peer_port, fingerprint) = if let Some(ref url) = relay_url {
-        println!("  querying relay for `{code}`…");
+        println!("  \x1b[90mquerying relay for `{code}`…\x1b[0m");
         let (ip, port, fp) = relay::find_wan(url, &code).await.context("relay lookup")?;
         (ip, port, fp)
     } else {
-        println!("  searching for `{code}` on the local network…");
+        println!("  \x1b[90msearching for `{code}` on the local network…\x1b[0m");
         let resolved = tokio::task::spawn_blocking({
             let code = code.clone();
             let timeout = timeouts.discovery;
@@ -168,7 +168,7 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
     endpoint.wait_idle().await;
 
     println!(
-        "  ✓ verified · {} · saved to {}",
+        "  \x1b[32m✓ verified\x1b[0m · {} · saved to \x1b[1;36m{}\x1b[0m",
         human(size),
         final_path.display()
     );
@@ -462,10 +462,10 @@ fn local_ipv4() -> Result<Ipv4Addr> {
 
 fn print_send_banner_lan(code: &str, name: &str, size: u64, ip: Ipv4Addr, port: u16, hash: &str) {
     println!();
-    println!("  ✦ wisp ready  (LAN)");
-    println!("    file   {name} ({})", human(size));
-    println!("    from   {ip}:{port}");
-    println!("    blake3 {}…", &hash[..hash.len().min(16)]);
+    println!("  \x1b[36m✦ wisp ready\x1b[0m  (LAN)");
+    println!("    \x1b[1mfile\x1b[0m   {name} ({})", human(size));
+    println!("    \x1b[1mfrom\x1b[0m   {ip}:{port}");
+    println!("    \x1b[90mblake3 {}…\x1b[0m", &hash[..hash.len().min(16)]);
     println!();
     println!("    on the other machine, run:");
     println!("      wisp recv {code}");
@@ -483,11 +483,11 @@ fn print_send_banner_wan(
     relay_url: &str,
 ) {
     println!();
-    println!("  ✦ wisp ready  (WAN via relay)");
-    println!("    file   {name} ({})", human(size));
-    println!("    public {observed_ip}:{port}");
-    println!("    relay  {relay_url}");
-    println!("    blake3 {}…", &hash[..hash.len().min(16)]);
+    println!("  \x1b[35m✦ wisp ready\x1b[0m  (WAN via relay)");
+    println!("    \x1b[1mfile\x1b[0m   {name} ({})", human(size));
+    println!("    \x1b[1mpublic\x1b[0m {observed_ip}:{port}");
+    println!("    \x1b[1mrelay\x1b[0m  {relay_url}");
+    println!("    \x1b[90mblake3 {}…\x1b[0m", &hash[..hash.len().min(16)]);
     println!();
     println!("    on the other machine, run:");
     println!("      wisp recv --relay {relay_url} {code}");

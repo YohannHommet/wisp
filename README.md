@@ -72,17 +72,19 @@ The relay brokers the initial connection; it **never sees file content or metada
 wisp-relay 7777          # listens on 0.0.0.0:7777
 ```
 
-**Step 2** — sender passes the relay URL:
+**Step 2** — sender passes the relay URL (or relies on configuration defaults):
 ```
 $ wisp send --relay http://relay.example.com:7777 photo.jpg
 
   ✦ wisp ready  (WAN via relay)
     file   photo.jpg (3.4 MB)
-    public 203.0.113.1:51873
+    public [2001:db8::1]:51873
     relay  http://relay.example.com:7777
 
     on the other machine, run:
       wisp recv --relay http://relay.example.com:7777 7-tiger-saturn
+
+  waiting for a receiver…
 ```
 
 **Step 3** — receiver uses the same relay URL and code:
@@ -90,7 +92,43 @@ $ wisp send --relay http://relay.example.com:7777 photo.jpg
 wisp recv --relay http://relay.example.com:7777 7-tiger-saturn
 ```
 
-> **NAT note:** WAN mode works when the sender has a reachable public address (VPS, or home router with port forwarding). Two users both behind home NAT may fail — the relay handles discovery only, not data proxying. Full NAT traversal is planned for Phase 4.
+> **NAT note:** WAN mode works when the sender has a reachable public address (IPv4, native IPv6, or home router with port forwarding). Two users both behind symmetric home NAT may fail — the relay handles discovery only, not data proxying. Full NAT traversal (such as ICE/STUN/TURN hole punching) is planned for Phase 4.
+
+---
+
+## Configuration
+
+Wisp supports an optional, user-level TOML configuration file to save default settings and customize network timeouts.
+
+### File Location
+* **Linux / macOS:** `~/.config/wisp/config.toml`
+* **Windows:** `%APPDATA%\wisp\config.toml`
+
+### Example `config.toml`
+```toml
+# Default WAN Rendezvous Relay URL (omitted by default for LAN-only)
+default_relay = "https://relay.example.com:7777"
+
+# Default destination directory for received files (supports ~ home expansion)
+default_download_dir = "~/Downloads"
+
+[timeouts]
+# SPAKE2 PAKE authentication timeout (seconds)
+pake = 15
+
+# Local network mDNS discovery timeout (seconds)
+discovery = 20
+
+# Stream read/write stalled timeout (seconds)
+block_transfer = 30
+```
+
+### Precedence Hierarchy
+When executing commands, parameters resolve in the following order:
+1. **Explicit CLI Flag:** (e.g. `--relay` or `--dir`)
+2. **Environment Variable:** (e.g. `WISP_RELAY`)
+3. **User Config File:** (`config.toml`)
+4. **Built-in Defaults:** (LAN-only mDNS fallback, current working directory, 15/20/30s timeouts)
 
 ---
 
@@ -129,7 +167,7 @@ Arguments:
   <CODE>              Code shown by the sender (e.g. 7-tiger-saturn)
 
 Options:
-  -d, --dir <DIR>     Directory to save into [default: current directory]
+  -d, --dir <DIR>     Directory to save into (falls back to config file or current directory)
   -r, --relay <RELAY> WAN relay URL (must match sender)
   -v, --verbose       Debug logging
   -h, --help
@@ -142,7 +180,7 @@ wisp recv 7-tiger-saturn --dir ~/Downloads
 wisp recv 7-tiger-saturn --relay http://relay.example.com:7777 --dir ~/Downloads
 ```
 
-If a file with the same name already exists, Wisp saves as `file (1).ext`, `file (2).ext`, etc.
+If a file with the same name already exists, Wisp saves it safely as `file (1).ext`, `file (2).ext`, etc.
 
 ---
 
@@ -152,9 +190,12 @@ If a file with the same name already exists, Wisp saves as `file (1).ext`, `file
 wisp-relay [port]     (default 7777)
 ```
 
-Runs an HTTP rendezvous server. Bind it to `0.0.0.0` so it's reachable from the internet.  
-The relay is stateless and structurally blind — it stores only a BLAKE3 commitment of the
-pairing code (not the code itself) and the sender's observed public IP:port.
+Runs an Axum rendezvous server. Bind it to `0.0.0.0` so it's reachable from the internet.  
+
+**Key Features:**
+* **State-blind Rendezvous:** Stores only a 16-byte BLAKE3 commitment of the pairing code (not the code itself) and the sender's observed public IP:port.
+* **Native IPv6 Support:** Handles direct IPv6 clients and header-forwarded IPv6 addresses.
+* **IP-Based Rate Limiting:** Enforces a limit of 30 requests per minute per IP address on all endpoints (returning `HTTP 429 Too Many Requests` on violation) to prevent Denial of Service.
 
 ---
 
@@ -203,11 +244,11 @@ Sender                    Relay (optional)             Receiver
   │         SPAKE2 handshake, then streaming transfer      │
 ```
 
-- **QUIC / TLS 1.3** — encrypted transport, 1-RTT handshake, ephemeral self-signed cert per session
-- **SPAKE2** — password-authenticated key exchange; wrong code = cryptographic rejection, not a timeout
-- **mDNS** — LAN discovery uses a BLAKE3 commitment of the code, not the code itself
-- **BLAKE3** — streaming integrity check; file is saved under a `.wisp-part` name and atomically renamed only after the hash matches
-- **Relay** — blind rendezvous: sees a 16-byte commitment and public IP:port, never file content
+- **QUIC / TLS 1.3** — encrypted transport, 1-RTT handshake, ephemeral self-signed cert per session.
+- **SPAKE2 + TLS Channel Binding** — password-authenticated key exchange bound to the TLS session via the TLS exporter (`tls_unique`), guaranteeing protection against active session hijacking and proxy MITM attacks.
+- **mDNS** — LAN discovery uses a BLAKE3 commitment of the code, not the code itself.
+- **BLAKE3** — streaming integrity check; file is saved under a `.wisp-part` name and atomically renamed only after the hash matches.
+- **Relay** — blind rendezvous: sees a 16-byte commitment and public IP:port, never file content. Protects its capacity using active IP rate limits.
 
 ---
 
@@ -215,7 +256,7 @@ Sender                    Relay (optional)             Receiver
 
 See **[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)** for the full security model.
 
-Short version: the pairing code is the only shared secret. A wrong code fails the SPAKE2 handshake before any file data is exchanged. The relay cannot read or modify transfers (it sees only a hash commitment and IP:port). TLS fingerprint is pinned by the receiver before connecting.
+Short version: the pairing code is the only shared secret. A wrong code fails the SPAKE2 handshake before any file data is exchanged. The relay cannot read or modify transfers (it sees only a hash commitment and IP:port). The TLS fingerprint is pinned by the receiver before connecting, and channel binding binds the session keys to the specific TLS tunnel.
 
 ---
 
@@ -225,7 +266,7 @@ Short version: the pairing code is the only shared secret. A wrong code fails th
 |---|---|---|
 | 1 | ✅ | LAN · QUIC · BLAKE3 verify-before-rename |
 | 2 | ✅ | SPAKE2 mutual auth · code commitment in mDNS |
-| 3 | ✅ | WAN blind relay · `wisp-relay` binary |
+| 3 | ✅ | WAN blind relay · `wisp-relay` binary · IPv6 · Rate Limiting · TLS Channel Binding |
 | 4 | planned | NAT traversal · multipath · audit |
 
 ---
@@ -236,6 +277,7 @@ Short version: the pairing code is the only shared secret. A wrong code fails th
 crates/
   wisp-core/      protocol library
     code.rs         short pairing codes
+    config.rs       TOML configuration parser & precedence resolution
     pake.rs         SPAKE2 mutual auth (RFC 9382)
     discovery.rs    mDNS advertise / find
     relay.rs        HTTP client for WAN rendezvous

@@ -67,7 +67,7 @@ a LAN observer.
 
 **Integrity:** verify-before-rename on BLAKE3 hash (same as Phase 1).
 
-| Property | Phase 2 status |
+| Property | Phase 3 status |
 | --- | --- |
 | Content confidentiality vs **passive** eavesdropper | ✅ TLS 1.3 over QUIC |
 | Content integrity / corruption detection | ✅ BLAKE3 verify-before-rename |
@@ -76,25 +76,19 @@ a LAN observer.
 | Mutual authentication of peers | ✅ SPAKE2 (RFC 9382) |
 | Forward secrecy | ✅ QUIC ephemeral key exchange |
 | Offline brute-force of pairing code | ✅ no usable oracle; PAKE is zero-knowledge |
-| Channel binding (TLS ↔ PAKE key) | ⚠️ not yet — see note below |
-| WAN / NAT traversal | ❌ Phase 3 |
+| Channel binding (TLS ↔ PAKE key) | ✅ Yes — bound via TLS exporter keying material |
+| WAN / NAT traversal | ✅ Phase 3 Rendezvous blind relay |
 
-**Remaining Phase-2 limitation (documented honestly):** the PAKE shared key and
-the TLS session are not formally *bound* together (channel binding via TLS
-exported key material). A very sophisticated active attacker who can both spoof
-mDNS *and* knows the code could theoretically relay a legitimate PAKE exchange
-over a MITM TLS connection. This requires knowing the code, which is the primary
-secret — in practice, if the code is shared out-of-band (Signal, in-person), this
-attack surface is minimal. Full channel binding is planned for Phase 2.5.
+### Channel Binding (TLS ↔ PAKE Key)
+To prevent active connection relay or session redirection attacks, Wisp implements formal channel binding. Both endpoints call the TLS exporter interface (`export_keying_material` with label `b"wisp-channel-binding"`) to extract a 32-byte session token unique to the specific QUIC TLS session. This token is mixed into the SPAKE2 confirmation MAC calculations, ensuring that the PAKE protocol is cryptographically bound to the exact physical TLS tunnel.
 
 ---
 
-## Phase 3 (planned) — WAN, blind relay
+## Phase 3 — WAN, blind relay ✅
 
-- Rendezvous via DHT / minimal server addressed by a blinded topic.
-- NAT traversal via ICE-style hole punching.
-- Fallback **blind relay** forwards only E2E ciphertext; it learns neither
-  content nor metadata.
+* **Blinded Topic Rendezvous:** Initial IP/port discovery operates case-insensitively over the WAN blind relay using a BLAKE3 commitment of the pairing code as the topic hash (`ch`).
+* **Blind WAN relaying:** The Axum rendezvous relay records public WAN IP information and passes it to the receiver. It is stateless and blind—it never processes or stores the plaintext pairing code or file data.
+* **Denial of Service protections:** The relay implements IP-based rate limiting (max 30 requests/minute per client IP) and atomic single-threaded capacity limit purges (`CleanupGuard`) to prevent resource exhaustion and contention.
 
 ## Phase 4 (planned) — performance & assurance
 

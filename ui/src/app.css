@@ -129,9 +129,13 @@ body {
 }
 
 .nav-btn.active {
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-primary);
+  background: rgba(16, 185, 129, 0.06);
+  color: var(--accent-emerald);
   font-weight: 600;
+  border-left: 2px solid var(--accent-emerald);
+  border-radius: 0 14px 14px 0;
+  margin-left: -24px;
+  padding-left: 22px;
 }
 
 .sidebar-footer {
@@ -182,8 +186,8 @@ body {
 }
 
 .drop-zone:hover {
-  background: rgba(255, 255, 255, 0.02);
-  border-color: var(--panel-border-glow);
+  background: rgba(16, 185, 129, 0.01);
+  border-color: rgba(16, 185, 129, 0.3);
 }
 
 .drop-icon {
@@ -228,7 +232,7 @@ body {
 }
 
 .code-row:focus-within {
-  border-color: rgba(255, 255, 255, 0.15);
+  border-color: rgba(16, 185, 129, 0.3);
 }
 
 .input-glow {
@@ -243,7 +247,7 @@ body {
 }
 
 .btn-primary {
-  background: #ffffff;
+  background: var(--accent-emerald);
   border: none;
   padding: 10px 20px;
   border-radius: 12px;
@@ -255,7 +259,8 @@ body {
 }
 
 .btn-primary:hover {
-  background: #f3f4f6;
+  background: #059669;
+  color: #ffffff;
   transform: translateY(-1px);
 }
 

@@ -194,17 +194,10 @@
   <!-- Sidebar Navigation -->
   <aside class="sidebar" class:collapsed={sidebarCollapsed}>
     <div class="brand">
+      <div class="brand-dot"></div>
       {#if !sidebarCollapsed}
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <div class="brand-dot"></div>
-          <span class="brand-name">wisp</span>
-        </div>
+        <span class="brand-name">wisp</span>
       {/if}
-      <button class="collapse-btn-top" class:collapsed={sidebarCollapsed} on:click={() => sidebarCollapsed = !sidebarCollapsed} title={sidebarCollapsed ? "Expand" : "Collapse"}>
-        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate({sidebarCollapsed ? 180 : 0}deg); transition: transform 0.3s ease;">
-          <polyline points="15 18 9 12 15 6" />
-        </svg>
-      </button>
     </div>
 
     <nav class="nav-links">
@@ -243,6 +236,16 @@
         Build 108
       </div>
     {/if}
+
+    <!-- Floating Edge-Grab Retractor Zone -->
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="grab-boundary-zone" on:click={() => sidebarCollapsed = !sidebarCollapsed}></div>
+    <button class="floating-toggle-btn" on:click={() => sidebarCollapsed = !sidebarCollapsed} title={sidebarCollapsed ? "Expand" : "Collapse"}>
+      <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="transform: rotate({sidebarCollapsed ? 180 : 0}deg); transition: transform 0.3s ease;">
+        <polyline points="15 18 9 12 15 6" />
+      </svg>
+    </button>
   </aside>
 
   <!-- Main View Area -->

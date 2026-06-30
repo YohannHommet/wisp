@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  // Import Tauri APIs conditionally to prevent crashes in web preview
+  // Import Tauri APIs conditionally to prevent crashes in standalone web previews
   let invoke = async (cmd: string, args: any = {}): Promise<any> => {
     console.log("[Mock Invoke]", cmd, args);
     if (cmd === 'generate_pairing_code') return '7-tiger-saturn';
@@ -188,56 +188,45 @@
 
   // Helper: formatted progress percentage
   $: progressPercent = totalBytes > 0n ? Math.round(Number(bytesTransferred * 100n / totalBytes)) : 0;
-  $: progressOffset = 502 - (502 * progressPercent) / 100;
 </script>
-
-<svg style="position: absolute; width: 0; height: 0;">
-  <defs>
-    <linearGradient id="brand-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00f2fe" />
-      <stop offset="100%" stop-color="#9b51e0" />
-    </linearGradient>
-    <linearGradient id="ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00f2fe" />
-      <stop offset="100%" stop-color="#9b51e0" />
-    </linearGradient>
-  </defs>
-</svg>
 
 <div class="glass-container">
   <!-- Sidebar Navigation -->
   <aside class="sidebar">
     <div class="brand">
-      <svg class="brand-icon" viewBox="0 0 32 32">
-        <path d="M16 2 L2 9 L2 23 L16 30 L30 23 L30 9 Z" />
-        <path d="M16 8 L6 13 L16 18 L26 13 Z" />
-        <path d="M16 18 L16 30" />
-      </svg>
-      <span class="brand-name">WISP</span>
+      <div class="brand-dot"></div>
+      <span class="brand-name">wisp</span>
     </div>
 
     <nav class="nav-links">
       <button class="nav-btn" class:active={activeTab === 'dashboard'} on:click={() => activeTab = 'dashboard'}>
-        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <rect width="7" height="9" x="3" y="3" rx="1" />
-          <rect width="7" height="5" x="14" y="3" rx="1" />
-          <rect width="7" height="9" x="14" y="12" rx="1" />
-          <rect width="7" height="5" x="3" y="16" rx="1" />
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="9" rx="1" />
+          <rect x="14" y="3" width="7" height="5" rx="1" />
+          <rect x="14" y="12" width="7" height="9" rx="1" />
+          <rect x="3" y="16" width="7" height="5" rx="1" />
         </svg>
         Dashboard
       </button>
 
       <button class="nav-btn" class:active={activeTab === 'settings'} on:click={() => activeTab = 'settings'}>
-        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" y1="21" x2="4" y2="14" />
+          <line x1="4" y1="10" x2="4" y2="3" />
+          <line x1="12" y1="21" x2="12" y2="12" />
+          <line x1="12" y1="8" x2="12" y2="3" />
+          <line x1="20" y1="21" x2="20" y2="16" />
+          <line x1="20" y1="12" x2="20" y2="3" />
+          <line x1="1" y1="14" x2="7" y2="14" />
+          <line x1="9" y1="8" x2="15" y2="8" />
+          <line x1="17" y1="16" x2="23" y2="16" />
         </svg>
         Settings
       </button>
     </nav>
 
     <div class="sidebar-footer">
-      Wisp Desktop v0.1.0
+      Build 108
     </div>
   </aside>
 
@@ -245,8 +234,8 @@
   <main class="main-content">
     {#if activeTab === 'dashboard'}
       <div class="view-header">
-        <h2>Transfer Files</h2>
-        <p>Ultra-fast peer-to-peer file sharing over LAN or WAN</p>
+        <h2>Send & Receive</h2>
+        <p>Transfer secure files peer-to-peer without servers</p>
       </div>
 
       {#if transferState === 'idle'}
@@ -254,22 +243,25 @@
         <!-- svelte-ignore a11y-click-events-have-key-events -->
         <!-- svelte-ignore a11y-no-static-element-interactions -->
         <div class="drop-zone" on:click={handleSend}>
-          <svg class="drop-icon" fill="none" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
+          <svg class="drop-icon" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="12" y1="18" x2="12" y2="12" />
+            <polyline points="9 15 12 12 15 15" />
           </svg>
-          <span class="drop-text">Drag and drop files here or browse</span>
-          <span class="drop-subtext">Supports single/multiple files or directories</span>
+          <span class="drop-text">Drag and drop file here or browse</span>
+          <span class="drop-subtext">File is kept fully private during transfer</span>
         </div>
 
         <!-- Code Entry for Receiver -->
         <div class="code-entry-box">
-          <label for="pairing-code-input" class="drop-subtext" style="text-transform: uppercase; letter-spacing: 1px;">Receive File from Peer</label>
+          <span class="drop-subtext" style="text-transform: uppercase; font-weight: 600;">Receive File from Peer</span>
           <div class="code-row">
             <input 
               id="pairing-code-input"
               type="text" 
               class="input-glow" 
-              placeholder="Enter pairing code (e.g. 7-tiger-saturn)" 
+              placeholder="Enter pairing code..." 
               bind:value={enteredCode} 
             />
             <button class="btn-primary" on:click={handleReceive}>Receive</button>
@@ -284,29 +276,34 @@
           <!-- svelte-ignore a11y-no-static-element-interactions -->
           <div class="pairing-code" on:click={() => navigator.clipboard.writeText(pairingCode)}>
             {pairingCode}
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
           </div>
-          <span class="drop-subtext">Click to copy. Send this code to the receiver.</span>
+          <span class="drop-subtext">Click to copy code. Send it to the receiver.</span>
           <span class="waiting-sub">Awaiting peer connection...</span>
-          <button class="btn-danger" style="margin-top: 24px;" on:click={handleCancel}>Cancel</button>
+          <button class="btn-danger" style="margin-top: 16px;" on:click={handleCancel}>Cancel</button>
         </div>
 
       {:else if transferState === 'transferring'}
         <!-- Active transfer screen -->
         <div class="transfer-progress-view">
-          <div class="progress-ring-container">
-            <svg width="180" height="180">
-              <circle class="progress-ring-bg" cx="90" cy="90" r="80" />
-              <circle class="progress-ring-fg" cx="90" cy="90" r="80" 
-                      style="stroke-dasharray: 502; stroke-dashoffset: {progressOffset};" />
-            </svg>
-            <div class="progress-text-center">{progressPercent}%</div>
-          </div>
-
           <div class="transfer-meta">
             <span class="filename-txt">{currentFile ? currentFile.split('/').pop() : 'Receiving File...'}</span>
+            <span style="font-weight: 700; color: var(--text-primary);">{progressPercent}%</span>
+          </div>
+
+          <div class="linear-progress-wrapper">
+            <div class="linear-progress-bg">
+              <div class="linear-progress-bar" style="width: {progressPercent}%;"></div>
+            </div>
+          </div>
+
+          <div class="transfer-meta" style="margin-top: -8px;">
             <div class="transfer-stats">
               <span>{transferSpeed}</span>
-              <div class="stats-divider"></div>
+              <span style="color: var(--text-muted);">·</span>
               <span>{eta}</span>
             </div>
           </div>
@@ -317,11 +314,11 @@
       {:else if transferState === 'done'}
         <!-- Success Screen -->
         <div class="code-present-container">
-          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green)" stroke-width="2">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4" />
+            <polyline points="22 4 12 14.01 9 11.01" />
           </svg>
-          <h3 style="font-size: 24px; font-weight: 800; margin: 12px 0 4px 0;">Transfer Completed</h3>
+          <h3 style="font-size: 20px; font-weight: 700; margin: 8px 0 2px 0;">Transfer Completed</h3>
           <p class="drop-subtext">File integrity verified via BLAKE3 checksum.</p>
           <button class="btn-primary" style="margin-top: 16px;" on:click={resetTransfer}>Back to Dashboard</button>
         </div>
@@ -329,12 +326,13 @@
       {:else if transferState === 'error'}
         <!-- Error Screen -->
         <div class="code-present-container">
-          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--accent-red)" stroke-width="2">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent-coral)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
-          <h3 style="font-size: 24px; font-weight: 800; margin: 12px 0 4px 0;">Transfer Failed</h3>
-          <p class="drop-subtext" style="color: var(--accent-red);">{errorMessage}</p>
+          <h3 style="font-size: 20px; font-weight: 700; margin: 8px 0 2px 0;">Transfer Failed</h3>
+          <p class="drop-subtext" style="color: var(--accent-coral);">{errorMessage}</p>
           <button class="btn-primary" style="margin-top: 16px;" on:click={resetTransfer}>Dismiss</button>
         </div>
       {/if}
@@ -347,7 +345,7 @@
 
       <div style="display: flex; flex-direction: column; gap: 24px; max-width: 480px;">
         <div style="display: flex; flex-direction: column; gap: 8px;">
-          <label class="drop-subtext" style="text-transform: uppercase;" for="relay-url-input">Relay Server URL</label>
+          <span class="drop-subtext" style="text-transform: uppercase;">Relay Server URL</span>
           <input 
             id="relay-url-input"
             type="text" 
@@ -360,9 +358,9 @@
 
         <div style="display: flex; flex-direction: column; gap: 8px;">
           <span class="drop-subtext" style="text-transform: uppercase;">Connection Security</span>
-          <div style="display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 12px; border: 1px solid var(--panel-border);">
-            <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent-green);"></div>
-            <span style="font-size: 14px; font-weight: 600;">SPAKE2 Pinned Handshake + TLS 1.3 ALPN</span>
+          <div style="display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.01); padding: 14px; border-radius: 16px; border: 1px solid var(--panel-border);">
+            <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent-emerald);"></div>
+            <span style="font-size: 13px; font-weight: 600; color: var(--text-primary);">SPAKE2 Pinned Handshake + TLS 1.3 ALPN</span>
           </div>
         </div>
       </div>

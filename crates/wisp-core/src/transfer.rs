@@ -447,7 +447,13 @@ pub fn sanitize(name: &str) -> String {
         cleaned
     };
 
-    final_name.truncate(200);
+    if final_name.len() > 200 {
+        let mut limit = 200;
+        while limit > 0 && !final_name.is_char_boundary(limit) {
+            limit -= 1;
+        }
+        final_name.truncate(limit);
+    }
     final_name
 }
 

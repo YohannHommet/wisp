@@ -8,6 +8,19 @@ pub struct TransferManager {
     sessions: Mutex<HashMap<String, CancellationToken>>,
 }
 
+struct SessionGuard<'a> {
+    sessions: &'a Mutex<HashMap<String, CancellationToken>>,
+    session_id: String,
+}
+
+impl<'a> Drop for SessionGuard<'a> {
+    fn drop(&mut self) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.remove(&self.session_id);
+        }
+    }
+}
+
 #[derive(Clone, serde::Serialize)]
 struct ProgressPayload {
     transferred: u64,
@@ -56,6 +69,10 @@ async fn start_send_session(
         let mut sessions = state.sessions.lock().unwrap();
         sessions.insert(session_id.clone(), token.clone());
     }
+    let _guard = SessionGuard {
+        sessions: &state.sessions,
+        session_id: session_id.clone(),
+    };
 
     let filepath = std::path::PathBuf::from(filepath);
     let window_clone = window.clone();
@@ -68,7 +85,11 @@ async fn start_send_session(
     
     let progress_state_clone = progress_state.clone();
     let progress_cb = std::sync::Arc::new(move |transferred, total| {
-        let percent = (transferred as f64 / total as f64) * 100.0;
+        let percent = if total > 0 {
+            (transferred as f64 / total as f64) * 100.0
+        } else {
+            100.0
+        };
         let now = std::time::Instant::now();
         let mut lock = progress_state_clone.lock().unwrap();
         if now.duration_since(lock.0).as_millis() >= 100 || percent - lock.1 >= 1.0 || transferred == total {
@@ -86,11 +107,6 @@ async fn start_send_session(
             Err("Transfer cancelled by user".to_string())
         }
     };
-
-    {
-        let mut sessions = state.sessions.lock().unwrap();
-        sessions.remove(&session_id);
-    }
 
     if let Err(ref e) = result {
         let _ = window.emit("transfer-error", e.clone());
@@ -113,6 +129,10 @@ async fn start_recv_session(
         let mut sessions = state.sessions.lock().unwrap();
         sessions.insert(session_id.clone(), token.clone());
     }
+    let _guard = SessionGuard {
+        sessions: &state.sessions,
+        session_id: session_id.clone(),
+    };
 
     let download_dir = std::path::PathBuf::from(download_dir);
     let window_clone = window.clone();
@@ -125,7 +145,11 @@ async fn start_recv_session(
     
     let progress_state_clone = progress_state.clone();
     let progress_cb = std::sync::Arc::new(move |transferred, total| {
-        let percent = (transferred as f64 / total as f64) * 100.0;
+        let percent = if total > 0 {
+            (transferred as f64 / total as f64) * 100.0
+        } else {
+            100.0
+        };
         let now = std::time::Instant::now();
         let mut lock = progress_state_clone.lock().unwrap();
         if now.duration_since(lock.0).as_millis() >= 100 || percent - lock.1 >= 1.0 || transferred == total {
@@ -143,11 +167,6 @@ async fn start_recv_session(
             Err("Transfer cancelled by user".to_string())
         }
     };
-
-    {
-        let mut sessions = state.sessions.lock().unwrap();
-        sessions.remove(&session_id);
-    }
 
     if let Err(ref e) = result {
         let _ = window.emit("transfer-error", e.clone());

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
 
   // Import Tauri APIs conditionally to prevent crashes in standalone web previews
   let invoke = async (cmd: string, args: any = {}): Promise<any> => {
@@ -48,8 +48,8 @@
   let unlistenProgress: any = null;
   let unlistenError: any = null;
 
-  // Generate a random session ID
-  const sessionId = Math.random().toString(36).substring(7);
+  // Active session ID
+  let activeSessionId = '';
 
   function resetTransfer() {
     transferState = 'idle';
@@ -59,11 +59,23 @@
     errorMessage = '';
     bytesTransferred = 0n;
     totalBytes = 0n;
+    lastBytes = 0n;
     transferSpeed = '0 MB/s';
     eta = 'Calculating...';
+    if (unlistenProgress) {
+      unlistenProgress();
+      unlistenProgress = null;
+    }
+    if (unlistenError) {
+      unlistenError();
+      unlistenError = null;
+    }
+  }
+
+  onDestroy(() => {
     if (unlistenProgress) unlistenProgress();
     if (unlistenError) unlistenError();
-  }
+  });
 
   let copied = false;
   async function copyCodeToClipboard() {
@@ -82,6 +94,8 @@
 
   async function startSendSession(filepath: string) {
     try {
+      resetTransfer();
+      activeSessionId = Math.random().toString(36).substring(7);
       currentFile = filepath;
       pairingCode = await invoke('generate_pairing_code');
       transferState = 'waiting';
@@ -107,7 +121,7 @@
 
       // Start the transfer thread in background
       invoke('start_send_session', {
-        sessionId,
+        sessionId: activeSessionId,
         filepath: currentFile,
         relay: relayUrl ? relayUrl : null
       }).then(() => {
@@ -172,11 +186,16 @@
   async function handleReceive() {
     if (!enteredCode) return;
     try {
+      const codeToUse = enteredCode;
+      resetTransfer();
+      enteredCode = codeToUse;
+
       const dir = await invoke('open_dir_dialog');
       downloadDir = dir;
       transferState = 'transferring';
       startTime = Date.now();
       lastTime = Date.now();
+      activeSessionId = Math.random().toString(36).substring(7);
 
       // Setup listeners before starting session
       unlistenProgress = await listen('transfer-progress', (event: any) => {
@@ -193,7 +212,7 @@
 
       // Start the transfer thread in background
       invoke('start_recv_session', {
-        sessionId,
+        sessionId: activeSessionId,
         code: enteredCode,
         downloadDir,
         relay: relayUrl ? relayUrl : null
@@ -213,7 +232,9 @@
   }
 
   async function handleCancel() {
-    await invoke('cancel_transfer', { sessionId });
+    if (activeSessionId) {
+      await invoke('cancel_transfer', { sessionId: activeSessionId });
+    }
     resetTransfer();
   }
 

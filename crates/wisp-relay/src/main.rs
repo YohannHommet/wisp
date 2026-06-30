@@ -12,7 +12,8 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -39,7 +40,8 @@ struct Entry {
 struct AppState {
     store:   DashMap<String, Entry>,
     waiters: DashMap<String, Arc<Notify>>,
-    cleanup_running: std::sync::atomic::AtomicBool,
+    store_cleanup_running: std::sync::atomic::AtomicBool,
+    waiters_cleanup_running: std::sync::atomic::AtomicBool,
     rate_limits: DashMap<IpAddr, (u32, Instant)>,
 }
 
@@ -55,6 +57,7 @@ impl<'a> Drop for CleanupGuard<'a> {
 struct WaiterGuard {
     ch: String,
     state: Store,
+    notify: Arc<Notify>,
 }
 impl Drop for WaiterGuard {
     fn drop(&mut self) {
@@ -96,17 +99,6 @@ fn extract_ip(headers: &HeaderMap, peer_addr: SocketAddr) -> Result<IpAddr, &'st
 
 fn check_rate_limit(state: &Store, ip: IpAddr) -> bool {
     let now = Instant::now();
-    
-    // Periodically prune rate limit records older than 60s
-    if state.rate_limits.len() >= 1000 {
-        if state.cleanup_running.compare_exchange(
-            false, true, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed
-        ).is_ok() {
-            let _guard = CleanupGuard(&state.cleanup_running);
-            state.rate_limits.retain(|_, (_, time)| now.duration_since(*time) < Duration::from_secs(60));
-        }
-    }
-
     let mut entry = state.rate_limits.entry(ip).or_insert((0, now));
     let (count, start_time) = entry.value_mut();
     
@@ -144,18 +136,21 @@ async fn main() -> anyhow::Result<()> {
     let state: Store = Arc::new(AppState {
         store:   DashMap::new(),
         waiters: DashMap::new(),
-        cleanup_running: std::sync::atomic::AtomicBool::new(false),
+        store_cleanup_running: std::sync::atomic::AtomicBool::new(false),
+        waiters_cleanup_running: std::sync::atomic::AtomicBool::new(false),
         rate_limits: DashMap::new(),
     });
 
-    // Purge expired store entries and orphaned waiters every 15s.
+    // Purge expired store entries, rate limit records, and orphaned waiters every 15s.
     tokio::spawn({
         let state = state.clone();
         async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(15)).await;
-                state.store.retain(|_, v| v.expires > Instant::now());
+                let now = Instant::now();
+                state.store.retain(|_, v| v.expires > now);
                 state.waiters.retain(|_, notify| Arc::strong_count(notify) > 1);
+                state.rate_limits.retain(|_, (_, time)| now.duration_since(*time) < Duration::from_secs(60));
             }
         }
     });
@@ -229,10 +224,10 @@ async fn handle_pub(
 
     // Capacity limit check
     if state.store.len() >= MAX_CAPACITY {
-        if state.cleanup_running.compare_exchange(
+        if state.store_cleanup_running.compare_exchange(
             false, true, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed
         ).is_ok() {
-            let _guard = CleanupGuard(&state.cleanup_running);
+            let _guard = CleanupGuard(&state.store_cleanup_running);
             state.store.retain(|_, v| v.expires > Instant::now());
         }
         if state.store.len() >= MAX_CAPACITY {
@@ -300,10 +295,10 @@ async fn handle_sub(
 
     // Capacity limit check for waiters
     if state.waiters.len() >= MAX_CAPACITY {
-        if state.cleanup_running.compare_exchange(
+        if state.waiters_cleanup_running.compare_exchange(
             false, true, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed
         ).is_ok() {
-            let _guard = CleanupGuard(&state.cleanup_running);
+            let _guard = CleanupGuard(&state.waiters_cleanup_running);
             state.waiters.retain(|_, notify| Arc::strong_count(notify) > 1);
         }
         if state.waiters.len() >= MAX_CAPACITY {
@@ -315,15 +310,14 @@ async fn handle_sub(
     }
 
     // Get-or-create the Notify for this ch so handle_pub can wake us.
-    let notify = state
-        .waiters
-        .entry(ch.clone())
-        .or_insert_with(|| Arc::new(Notify::new()))
-        .clone();
-
     let guard = WaiterGuard {
         ch: ch.clone(),
         state: state.clone(),
+        notify: state
+            .waiters
+            .entry(ch.clone())
+            .or_insert_with(|| Arc::new(Notify::new()))
+            .clone(),
     };
 
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -334,7 +328,7 @@ async fn handle_sub(
         // notify_waiters() call that races between the check and the await
         // is not lost. If the sender fires between notified() creation and
         // the first poll, Tokio marks the future immediately ready.
-        let notified = notify.notified();
+        let notified = guard.notify.notified();
 
         let found = state.store.get(&ch).and_then(|e| {
             if e.expires > Instant::now() {
@@ -359,7 +353,6 @@ async fn handle_sub(
         let _ = tokio::time::timeout(remaining, notified).await;
     }
 
-    drop(notify);
     drop(guard);
 
     result.unwrap_or((
@@ -457,7 +450,8 @@ mod integration_tests {
         let state: Store = Arc::new(AppState {
             store: DashMap::new(),
             waiters: DashMap::new(),
-            cleanup_running: std::sync::atomic::AtomicBool::new(false),
+            store_cleanup_running: std::sync::atomic::AtomicBool::new(false),
+            waiters_cleanup_running: std::sync::atomic::AtomicBool::new(false),
             rate_limits: DashMap::new(),
         });
         let app = Router::new()
@@ -603,4 +597,91 @@ mod integration_tests {
         let (status, body) = http_get(port, &format!("/pub/{ch}/{fp}/9000")).await;
         assert_eq!(status, 429, "Expected HTTP 429, got {status} ({body})");
     }
+
+    #[tokio::test]
+    async fn test_direct_handler_abort_bug() {
+        tokio::time::pause();
+
+        let state: Store = Arc::new(AppState {
+            store: DashMap::new(),
+            waiters: DashMap::new(),
+            store_cleanup_running: std::sync::atomic::AtomicBool::new(false),
+            waiters_cleanup_running: std::sync::atomic::AtomicBool::new(false),
+            rate_limits: DashMap::new(),
+        });
+        
+        let ch = "e".repeat(32);
+        let fp = "f".repeat(64);
+        
+        println!("[TEST] Start Sub1 at t = {:?}", tokio::time::Instant::now());
+        let state_clone1 = state.clone();
+        let ch_clone1 = ch.clone();
+        let sub1 = tokio::spawn(async move {
+            let addr = SocketAddr::from(([127, 0, 0, 1], 12345));
+            handle_sub(
+                Path(ch_clone1),
+                State(state_clone1),
+                ConnectInfo(addr),
+                HeaderMap::new(),
+            ).await
+        });
+        
+        // Advance to t = 15s
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        
+        println!("[TEST] Start Sub2 at t = {:?}", tokio::time::Instant::now());
+        let state_clone2 = state.clone();
+        let ch_clone2 = ch.clone();
+        let sub2 = tokio::spawn(async move {
+            let addr = SocketAddr::from(([127, 0, 0, 1], 12345));
+            handle_sub(
+                Path(ch_clone2),
+                State(state_clone2),
+                ConnectInfo(addr),
+                HeaderMap::new(),
+            ).await
+        });
+        
+        // Let Sub2 register (t = 15.1s)
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        
+        println!("[TEST] Waiters count before Sub1 timeout: {}", state.waiters.len());
+        
+        // Advance to t = 31s (Sub1 timed out at t = 30s)
+        tokio::time::sleep(Duration::from_secs(16)).await;
+        println!("[TEST] Time now: {:?}", tokio::time::Instant::now());
+        
+        println!("[TEST] Waiters count after Sub1 timeout: {}", state.waiters.len());
+        
+        // Publisher announces at t = 31.1s
+        println!("[TEST] Publisher announcing...");
+        let addr = SocketAddr::from(([127, 0, 0, 1], 12345));
+        let (pub_status, pub_body) = handle_pub(
+            Path((ch.clone(), fp.clone(), "7777".to_string())),
+            State(state.clone()),
+            ConnectInfo(addr),
+            HeaderMap::new(),
+        ).await;
+        println!("[TEST] Publisher response: {:?}, body: {:?}", pub_status, pub_body);
+        
+        println!("[TEST] Awaiting Sub2 (expecting immediate wake)...");
+        // We use a 1-second timeout in mock time. If Sub2 wakes up immediately, the time will still be 31.1s.
+        // If the bug is present, Sub2 will not wake up and will time out (mock time would advance to its timeout).
+        let sub2_res = tokio::time::timeout(Duration::from_secs(1), sub2).await;
+        println!("[TEST] Sub2 raw result: {:?}", sub2_res);
+        
+        let (sub2_status, sub2_body) = match sub2_res {
+            Ok(Ok(res)) => res,
+            _ => panic!("Sub2 did NOT wake up immediately when publisher announced at t=31s! It is delayed/orphaned!"),
+        };
+            
+        println!("[TEST] Sub2 finished with status {:?}, body: {:?}", sub2_status, sub2_body);
+        assert_eq!(sub2_status, StatusCode::OK);
+        
+        // Cleanup sub1 task
+        let _ = sub1.await;
+    }
 }
+
+
+

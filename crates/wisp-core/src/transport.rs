@@ -20,8 +20,11 @@ use rustls::{DigitallySignedStruct, SignatureScheme};
 
 use crate::PROTOCOL;
 
+use std::sync::OnceLock;
+
 fn provider() -> Arc<CryptoProvider> {
-    Arc::new(rustls::crypto::ring::default_provider())
+    static PROVIDER: OnceLock<Arc<CryptoProvider>> = OnceLock::new();
+    PROVIDER.get_or_init(|| Arc::new(rustls::crypto::ring::default_provider())).clone()
 }
 
 /// A server config plus the fingerprint a receiver must pin.
@@ -53,6 +56,10 @@ pub fn make_server_config() -> Result<ServerSetup> {
 
     let mut transport = TransportConfig::default();
     transport.max_concurrent_uni_streams(0u8.into());
+    // Custom flow control windows for high throughput (8 MiB / 12 MiB / 8 MiB)
+    transport.stream_receive_window(8_388_608u32.into());
+    transport.receive_window(12_582_912u32.into());
+    transport.send_window(8_388_608u64);
     config.transport_config(Arc::new(transport));
 
     Ok(ServerSetup {
@@ -77,7 +84,17 @@ pub fn make_client_config(expected_fingerprint: [u8; 32]) -> Result<ClientConfig
     crypto.alpn_protocols = vec![PROTOCOL.as_bytes().to_vec()];
 
     let quic = QuicClientConfig::try_from(crypto).context("quic client config")?;
-    Ok(ClientConfig::new(Arc::new(quic)))
+    let mut config = ClientConfig::new(Arc::new(quic));
+
+    let mut transport = TransportConfig::default();
+    transport.max_concurrent_uni_streams(0u8.into());
+    // Custom flow control windows for high throughput (8 MiB / 12 MiB / 8 MiB)
+    transport.stream_receive_window(8_388_608u32.into());
+    transport.receive_window(12_582_912u32.into());
+    transport.send_window(8_388_608u64);
+    config.transport_config(Arc::new(transport));
+
+    Ok(config)
 }
 
 /// Verifier that accepts exactly one certificate: the one whose BLAKE3

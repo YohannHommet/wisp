@@ -21,11 +21,9 @@ pub const PROTOCOL: &str = "wsp/1";
 
 /// BLAKE3(first_two_parts_of_code)[..16] as hex — the mDNS / relay commitment.
 pub(crate) fn code_commitment(code: &str) -> String {
-    let parts: Vec<&str> = code.split('-').collect();
-    let commitment_input = if parts.len() >= 2 {
-        format!("{}-{}", parts[0], parts[1])
-    } else {
-        code.to_string()
+    let commitment_input = match code.match_indices('-').nth(1) {
+        Some((idx, _)) => &code[..idx],
+        None => code,
     };
     hex::encode(&blake3::hash(commitment_input.as_bytes()).as_bytes()[..16])
 }

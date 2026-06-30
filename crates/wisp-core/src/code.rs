@@ -4,8 +4,7 @@
 //! it becomes the password of a PAKE (SPAKE2), so the wordlist is chosen to be
 //! short, unambiguous, and easy to read aloud.
 
-use rand::seq::SliceRandom;
-use rand::Rng;
+use rand::seq::IndexedRandom;
 
 /// Curated, evocative, low-confusion wordlist (light / nature / space themed).
 static WORDS: &[&str] = &[
@@ -26,8 +25,8 @@ static WORDS: &[&str] = &[
 
 /// Generate a fresh pairing code, e.g. `7-tiger-saturn`.
 pub fn generate() -> String {
-    let mut rng = rand::thread_rng();
-    let n: u16 = rng.gen_range(0..1000);
+    let mut rng = rand::rng();
+    let n: u16 = rand::random_range(0..1000);
     let w1 = WORDS.choose(&mut rng).copied().unwrap_or("wisp");
     let mut w2 = WORDS.choose(&mut rng).copied().unwrap_or("spark");
     if w2 == w1 {

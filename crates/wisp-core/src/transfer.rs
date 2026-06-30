@@ -216,7 +216,8 @@ async fn sender_protocol(
     .context("metadata write stalled")??;
 
     let pb = progress(size, "  ↗ sending  ");
-    let mut file = File::open(path).await?;
+    let file = File::open(path).await?;
+    let mut file = tokio::io::BufReader::with_capacity(256 * 1024, file);
     let mut buf = vec![0u8; CHUNK];
     let mut sent = 0u64;
     loop {
@@ -288,23 +289,27 @@ async fn receiver_protocol(
     // on any error between File::create and rename, delete the part file.
     let outcome: Result<()> = async {
         let pb = progress(meta.size, "  ↘ receiving");
-        let mut file = File::create(&part_path)
+        let file = File::create(&part_path)
             .await
             .with_context(|| format!("creating {}", part_path.display()))?;
+        let mut file = tokio::io::BufWriter::with_capacity(256 * 1024, file);
         let mut hasher = blake3::Hasher::new();
-        let mut buf = vec![0u8; CHUNK];
         let mut received = 0u64;
 
         while received < meta.size {
-            let chunk = tokio::time::timeout(timeouts.block_transfer, recv.read(&mut buf))
+            let chunk_opt = tokio::time::timeout(timeouts.block_transfer, recv.read_chunk(CHUNK, true))
                 .await
                 .context("stalled: no data received for 30 s")?
                 .context("reading file data")?;
-            match chunk {
-                Some(0) | None => break,
-                Some(n) => {
-                    hasher.update(&buf[..n]);
-                    file.write_all(&buf[..n]).await?;
+            match chunk_opt {
+                None => break,
+                Some(chunk) => {
+                    let n = chunk.bytes.len();
+                    if n == 0 {
+                        break;
+                    }
+                    hasher.update(&chunk.bytes);
+                    file.write_all(&chunk.bytes).await?;
                     received += n as u64;
                     pb.set_position(received);
                 }
@@ -342,19 +347,26 @@ async fn receiver_protocol(
 // ===== helpers =====
 
 async fn hash_file(path: &Path) -> Result<(String, u64)> {
-    let mut file = File::open(path).await?;
-    let mut hasher = blake3::Hasher::new();
-    let mut buf = vec![0u8; CHUNK];
-    let mut size = 0u64;
-    loop {
-        let n = file.read(&mut buf).await?;
-        if n == 0 {
-            break;
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || {
+        use std::fs::File;
+        use std::io::Read;
+        let mut file = File::open(&path)?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buf = vec![0u8; 128 * 1024]; // 128 KiB buffer for sequential read
+        let mut size = 0u64;
+        loop {
+            let n = file.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+            size += n as u64;
         }
-        hasher.update(&buf[..n]);
-        size += n as u64;
-    }
-    Ok((hasher.finalize().to_hex().to_string(), size))
+        Ok::<_, anyhow::Error>((hasher.finalize().to_hex().to_string(), size))
+    })
+    .await
+    .context("hashing task panicked")?
 }
 
 fn sanitize(name: &str) -> String {

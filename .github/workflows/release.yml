@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build - ${{ matrix.platform.os-name }}
+    runs-on: ${{ matrix.platform.runs-on }}
+    strategy:
+      matrix:
+        platform:
+          - os-name: Linux-x86_64
+            runs-on: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset_name: wisp-linux-amd64
+          - os-name: Linux-arm64
+            runs-on: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            asset_name: wisp-linux-arm64
+          - os-name: Windows-x86_64
+            runs-on: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset_name: wisp-windows-amd64.exe
+          - os-name: macOS-universal
+            runs-on: macos-latest
+            asset_name: wisp-macos-universal
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Install cross compilation dependencies (Linux arm64)
+        if: matrix.platform.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build macOS Universal Binary
+        if: matrix.platform.os-name == 'macOS-universal'
+        run: |
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
+          cargo build --release --bin wisp --target x86_64-apple-darwin
+          cargo build --release --bin wisp --target aarch64-apple-darwin
+          lipo -create \
+            target/x86_64-apple-darwin/release/wisp \
+            target/aarch64-apple-darwin/release/wisp \
+            -output target/wisp-macos-universal
+
+      - name: Build target (Standard)
+        if: matrix.platform.os-name != 'macOS-universal'
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build --release --bin wisp --target ${{ matrix.platform.target }}
+
+      - name: Prepare asset (Linux / Windows)
+        if: matrix.platform.os-name != 'macOS-universal'
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform.runs-on }}" = "windows-latest" ]; then
+            cp target/${{ matrix.platform.target }}/release/wisp.exe target/${{ matrix.platform.asset_name }}
+          else
+            cp target/${{ matrix.platform.target }}/release/wisp target/${{ matrix.platform.asset_name }}
+          fi
+
+      - name: Upload binaries to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.platform.os-name == 'macOS-universal' && 'target/wisp-macos-universal' || format('target/{0}', matrix.platform.asset_name) }}

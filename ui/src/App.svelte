@@ -314,7 +314,7 @@
       {:else if transferState === 'done'}
         <!-- Success Screen -->
         <div class="code-present-container">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent-sage)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10" />
             <polyline points="22 4 12 14.01 9 11.01" />
           </svg>
@@ -359,7 +359,7 @@
         <div style="display: flex; flex-direction: column; gap: 8px;">
           <span class="drop-subtext" style="text-transform: uppercase;">Connection Security</span>
           <div style="display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.01); padding: 14px; border-radius: 16px; border: 1px solid var(--panel-border);">
-            <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent-emerald);"></div>
+            <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent-sage);"></div>
             <span style="font-size: 13px; font-weight: 600; color: var(--text-primary);">SPAKE2 Pinned Handshake + TLS 1.3 ALPN</span>
           </div>
         </div>

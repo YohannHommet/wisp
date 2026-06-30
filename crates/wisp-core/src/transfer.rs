@@ -27,6 +27,8 @@ use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+pub type ProgressCallback = std::sync::Arc<dyn Fn(u64, u64) + Send + Sync + 'static>;
+
 const CHUNK: usize = 64 * 1024;
 const MAX_META: usize = 64 * 1024;
 const MAX_FILE_SIZE: u64 = 1_099_511_627_776; // 1 TiB
@@ -46,6 +48,7 @@ pub async fn send_file(
     path: PathBuf,
     display_name: Option<String>,
     relay_url: Option<String>,
+    progress_cb: Option<ProgressCallback>,
 ) -> Result<()> {
     if !path.is_file() {
         return Err(Error::InvalidFile(path));
@@ -103,7 +106,7 @@ pub async fn send_file(
     conn.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[])
         .map_err(|e| anyhow!("failed to export TLS channel binding: {:?}", e))?;
 
-    sender_protocol(&code, &path, &name, size, &hash, &mut send, &mut recv, &tls_unique, &timeouts).await?;
+    sender_protocol(&code, &path, &name, size, &hash, &mut send, &mut recv, &tls_unique, &timeouts, &progress_cb).await?;
 
     // Give the receiver up to POST_SEND_TIMEOUT to close the connection gracefully.
     // If it crashes or stalls we still move on and report success — the file was sent.
@@ -113,7 +116,12 @@ pub async fn send_file(
 }
 
 /// Receive a file by its pairing code. Pass `relay_url` for WAN mode.
-pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>) -> Result<()> {
+pub async fn receive_file(
+    code: String,
+    dir: PathBuf,
+    relay_url: Option<String>,
+    progress_cb: Option<ProgressCallback>,
+) -> Result<()> {
     tokio::fs::create_dir_all(&dir)
         .await
         .with_context(|| format!("creating output directory {}", dir.display()))?;
@@ -162,7 +170,7 @@ pub async fn receive_file(code: String, dir: PathBuf, relay_url: Option<String>)
         .map_err(|e| anyhow!("failed to export TLS channel binding: {:?}", e))?;
 
     let (final_path, size) =
-        receiver_protocol(&code, &dir, &mut send, &mut recv, &tls_unique, &timeouts).await?;
+        receiver_protocol(&code, &dir, &mut send, &mut recv, &tls_unique, &timeouts, &progress_cb).await?;
 
     conn.close(0u32.into(), b"done");
     endpoint.wait_idle().await;
@@ -190,6 +198,7 @@ async fn sender_protocol(
     recv: &mut RecvStream,
     tls_unique: &[u8; 32],
     timeouts: &crate::config::ResolvedTimeouts,
+    progress_cb: &Option<ProgressCallback>,
 ) -> Result<()> {
     tokio::time::timeout(timeouts.pake, pake::sender_handshake(code, send, recv, tls_unique))
         .await
@@ -215,7 +224,12 @@ async fn sender_protocol(
     .await
     .context("metadata write stalled")??;
 
-    let pb = progress(size, "  ↗ sending  ");
+    let pb = if progress_cb.is_none() {
+        Some(progress(size, "  ↗ sending  "))
+    } else {
+        None
+    };
+
     let file = File::open(path).await?;
     let mut file = tokio::io::BufReader::with_capacity(256 * 1024, file);
     let mut buf = vec![0u8; CHUNK];
@@ -230,10 +244,17 @@ async fn sender_protocol(
             .context("chunk write stalled")?
             .context("writing chunk")?;
         sent += n as u64;
-        pb.set_position(sent);
+        if let Some(ref p) = pb {
+            p.set_position(sent);
+        }
+        if let Some(ref cb) = progress_cb {
+            cb(sent, size);
+        }
     }
     send.finish().context("finishing stream")?;
-    pb.finish_and_clear();
+    if let Some(ref p) = pb {
+        p.finish_and_clear();
+    }
     Ok(())
 }
 
@@ -248,6 +269,7 @@ async fn receiver_protocol(
     recv: &mut RecvStream,
     tls_unique: &[u8; 32],
     timeouts: &crate::config::ResolvedTimeouts,
+    progress_cb: &Option<ProgressCallback>,
 ) -> Result<(PathBuf, u64)> {
     tokio::time::timeout(timeouts.pake, pake::receiver_handshake(code, send, recv, tls_unique))
         .await
@@ -293,7 +315,11 @@ async fn receiver_protocol(
     // Wrap body receive in an async block for a single cleanup site:
     // on any error between File::create and rename, delete the part file.
     let outcome: Result<()> = async {
-        let pb = progress(meta.size, "  ↘ receiving");
+        let pb = if progress_cb.is_none() {
+            Some(progress(meta.size, "  ↘ receiving"))
+        } else {
+            None
+        };
         let file = File::create(&part_path)
             .await
             .with_context(|| format!("creating {}", part_path.display()))?;
@@ -316,12 +342,19 @@ async fn receiver_protocol(
                     hasher.update(&chunk.bytes);
                     file.write_all(&chunk.bytes).await?;
                     received += n as u64;
-                    pb.set_position(received);
+                    if let Some(ref p) = pb {
+                        p.set_position(received);
+                    }
+                    if let Some(ref cb) = progress_cb {
+                        cb(received, meta.size);
+                    }
                 }
             }
         }
         file.flush().await?;
-        pb.finish_and_clear();
+        if let Some(ref p) = pb {
+            p.finish_and_clear();
+        }
 
         let actual = hasher.finalize().to_hex().to_string();
         if received != meta.size || actual != meta.hash {
@@ -575,7 +608,7 @@ mod tests {
                 let (mut s, mut r) = sc.accept_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                sender_protocol("99-wisp-test", &src2, "hello.txt", size, &hash2, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default())
+                sender_protocol("99-wisp-test", &src2, "hello.txt", size, &hash2, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default(), &None)
                     .await
             }
         });
@@ -587,7 +620,7 @@ mod tests {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                receiver_protocol("99-wisp-test", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default()).await
+                receiver_protocol("99-wisp-test", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default(), &None).await
             }
         });
 
@@ -617,7 +650,7 @@ mod tests {
                 let (mut s, mut r) = sc.accept_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                sender_protocol("correct-code", &src, "data.bin", size, &hash, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default())
+                sender_protocol("correct-code", &src, "data.bin", size, &hash, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default(), &None)
                     .await
             }
         });
@@ -629,7 +662,7 @@ mod tests {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                receiver_protocol("wrong-code", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default()).await
+                receiver_protocol("wrong-code", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default(), &None).await
             }
         });
 
@@ -662,7 +695,7 @@ mod tests {
                 let (mut s, mut r) = sc.accept_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 sc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                sender_protocol("42-large-test", &src2, "large.bin", size, &hash2, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default())
+                sender_protocol("42-large-test", &src2, "large.bin", size, &hash2, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default(), &None)
                     .await
             }
         });
@@ -674,7 +707,7 @@ mod tests {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                receiver_protocol("42-large-test", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default()).await
+                receiver_protocol("42-large-test", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default(), &None).await
             }
         });
 
@@ -739,7 +772,7 @@ mod tests {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                receiver_protocol("same-code", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default()).await
+                receiver_protocol("same-code", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default(), &None).await
             }
         });
 
@@ -804,7 +837,7 @@ mod tests {
                 let (mut s, mut r) = cc.open_bi().await.unwrap();
                 let mut tls_unique = [0u8; 32];
                 cc.export_keying_material(&mut tls_unique, b"wisp-channel-binding", &[]).unwrap();
-                receiver_protocol("size-test", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default()).await
+                receiver_protocol("size-test", &dst, &mut s, &mut r, &tls_unique, &crate::config::ResolvedTimeouts::default(), &None).await
             }
         });
 

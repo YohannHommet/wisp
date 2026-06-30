@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/wisp-core", "crates/wisp-cli", "crates/wisp-relay", "fuzz"]
+members = ["crates/wisp-core", "crates/wisp-cli", "crates/wisp-relay", "fuzz", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

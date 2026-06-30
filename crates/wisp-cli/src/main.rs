@@ -71,13 +71,13 @@ async fn main() {
                 Command::Send { file, name, relay } => {
                     let env_relay = std::env::var("WISP_RELAY").ok();
                     let final_relay = config.resolve_relay(relay.as_deref(), env_relay.as_deref());
-                    wisp_core::send_file(file, name, final_relay).await
+                    wisp_core::send_file(file, name, final_relay, None).await
                 }
                 Command::Recv { code, dir, relay } => {
                     let env_relay = std::env::var("WISP_RELAY").ok();
                     let final_relay = config.resolve_relay(relay.as_deref(), env_relay.as_deref());
                     let final_dir = config.resolve_download_dir(dir);
-                    wisp_core::receive_file(code, final_dir, final_relay).await
+                    wisp_core::receive_file(code, final_dir, final_relay, None).await
                 }
             }
         } => res,

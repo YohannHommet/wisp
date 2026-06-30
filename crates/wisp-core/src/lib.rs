@@ -15,7 +15,7 @@ pub mod transport;
 pub mod config;
 pub mod error;
 
-pub use transfer::{receive_file, send_file, sanitize};
+pub use transfer::{receive_file, send_file, sanitize, ProgressCallback};
 pub use error::{Error, Result};
 
 /// On-the-wire protocol identifier (ALPN + branding).

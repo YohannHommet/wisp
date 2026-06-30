@@ -251,8 +251,8 @@
 
       {#if transferState === 'idle'}
         <!-- Drag & Drop Zone / Send Picker -->
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
         <div class="drop-zone" on:click={handleSend}>
           <svg class="drop-icon" fill="none" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
@@ -280,8 +280,8 @@
         <!-- Waiting on peer to connect screen -->
         <div class="code-present-container">
           <span class="present-label">Your Pairing Code</span>
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <!-- svelte-ignore a11y-click-events-have-key-events -->
+          <!-- svelte-ignore a11y-no-static-element-interactions -->
           <div class="pairing-code" on:click={() => navigator.clipboard.writeText(pairingCode)}>
             {pairingCode}
           </div>
@@ -359,7 +359,7 @@
         </div>
 
         <div style="display: flex; flex-direction: column; gap: 8px;">
-          <label class="drop-subtext" style="text-transform: uppercase;">Connection Security</label>
+          <span class="drop-subtext" style="text-transform: uppercase;">Connection Security</span>
           <div style="display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 12px; border: 1px solid var(--panel-border);">
             <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent-green);"></div>
             <span style="font-size: 14px; font-weight: 600;">SPAKE2 Pinned Handshake + TLS 1.3 ALPN</span>

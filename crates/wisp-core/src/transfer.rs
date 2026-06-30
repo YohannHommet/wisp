@@ -18,14 +18,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context};
+use crate::error::{Error, Result};
+use crate::{discovery, pake, relay, transport};
 use indicatif::{ProgressBar, ProgressStyle};
 use quinn::{Endpoint, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-use crate::{discovery, pake, relay, transport};
 
 const CHUNK: usize = 64 * 1024;
 const MAX_META: usize = 64 * 1024;
@@ -48,7 +48,7 @@ pub async fn send_file(
     relay_url: Option<String>,
 ) -> Result<()> {
     if !path.is_file() {
-        return Err(anyhow!("not a regular file: {}", path.display()));
+        return Err(Error::InvalidFile(path));
     }
 
     let config = crate::config::Config::load().unwrap_or_default();
@@ -264,7 +264,7 @@ async fn receiver_protocol(
         .context("reading metadata length")?;
     let meta_len = u32::from_be_bytes(len_buf) as usize;
     if meta_len == 0 || meta_len > MAX_META {
-        return Err(anyhow!("invalid metadata length: {meta_len}"));
+        return Err(Error::Protocol(format!("invalid metadata length: {meta_len}")));
     }
     let mut meta_buf = vec![0u8; meta_len];
     tokio::time::timeout(timeouts.block_transfer, recv.read_exact(&mut meta_buf))
@@ -274,10 +274,10 @@ async fn receiver_protocol(
     let meta: FileMeta = serde_json::from_slice(&meta_buf).context("parsing metadata")?;
 
     if meta.size > MAX_FILE_SIZE {
-        return Err(anyhow!(
+        return Err(Error::Protocol(format!(
             "sender claims file size {} — refusing files over 1 TiB",
             human(meta.size)
-        ));
+        )));
     }
 
     let safe = sanitize(&meta.name);
@@ -325,12 +325,10 @@ async fn receiver_protocol(
 
         let actual = hasher.finalize().to_hex().to_string();
         if received != meta.size || actual != meta.hash {
-            return Err(anyhow!(
-                "integrity check FAILED — corrupt or tampered transfer \
-                 (discarded {} of {} bytes)",
+            return Err(Error::Integrity {
                 received,
-                meta.size
-            ));
+                expected: meta.size,
+            });
         }
 
         tokio::fs::rename(&part_path, &final_path)
@@ -354,7 +352,7 @@ async fn receiver_protocol(
 
 async fn hash_file(path: &Path) -> Result<(String, u64)> {
     let path = path.to_owned();
-    tokio::task::spawn_blocking(move || {
+    let res = tokio::task::spawn_blocking(move || {
         use std::fs::File;
         use std::io::Read;
         let mut file = File::open(&path)?;
@@ -372,10 +370,11 @@ async fn hash_file(path: &Path) -> Result<(String, u64)> {
         Ok::<_, anyhow::Error>((hasher.finalize().to_hex().to_string(), size))
     })
     .await
-    .context("hashing task panicked")?
+    .map_err(|e| Error::Generic(anyhow!("hashing task panicked: {:?}", e)))?;
+    res.map_err(Error::from)
 }
 
-fn sanitize(name: &str) -> String {
+pub fn sanitize(name: &str) -> String {
     let base = Path::new(name)
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -474,7 +473,7 @@ fn progress(size: u64, msg: &str) -> ProgressBar {
 fn local_ipv4() -> Result<Ipv4Addr> {
     match local_ip_address::local_ip().context("determining local IP")? {
         IpAddr::V4(v4) => Ok(v4),
-        IpAddr::V6(_) => Err(anyhow!("no IPv4 address found on this host")),
+        IpAddr::V6(_) => Err(Error::Discovery("no IPv4 address found on this host".to_string())),
     }
 }
 

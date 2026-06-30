@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/wisp-core", "crates/wisp-cli", "crates/wisp-relay"]
+members = ["crates/wisp-core", "crates/wisp-cli", "crates/wisp-relay", "fuzz"]
 
 [workspace.package]
 version = "0.1.0"

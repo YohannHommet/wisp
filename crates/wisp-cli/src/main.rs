@@ -1,6 +1,7 @@
 //! Wisp CLI — `wisp send <file>` / `wisp recv <code>`.
 
 use std::path::PathBuf;
+use std::error::Error;
 
 use clap::{Parser, Subcommand};
 

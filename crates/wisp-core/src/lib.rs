@@ -13,14 +13,16 @@ pub mod relay;
 pub mod transfer;
 pub mod transport;
 pub mod config;
+pub mod error;
 
-pub use transfer::{receive_file, send_file};
+pub use transfer::{receive_file, send_file, sanitize};
+pub use error::{Error, Result};
 
 /// On-the-wire protocol identifier (ALPN + branding).
 pub const PROTOCOL: &str = "wsp/1";
 
 /// BLAKE3(first_two_parts_of_code)[..16] as hex — the mDNS / relay commitment.
-pub(crate) fn code_commitment(code: &str) -> String {
+pub fn code_commitment(code: &str) -> String {
     let commitment_input = match code.match_indices('-').nth(1) {
         Some((idx, _)) => &code[..idx],
         None => code,

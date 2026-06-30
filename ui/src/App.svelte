@@ -27,14 +27,13 @@
   // State Management
   let activeTab = 'dashboard'; // 'dashboard' | 'settings'
   let transferState = 'idle'; // 'idle' | 'waiting' | 'transferring' | 'done' | 'error'
-  
+  let sidebarCollapsed = false;
   let currentFile = '';
   let downloadDir = '';
   let pairingCode = '';
   let enteredCode = '';
   let relayUrl = 'https://relay.wisp.net'; // Default relay server
   let errorMessage = '';
-  let sidebarExpanded = true;
 
   // Progress metrics
   let bytesTransferred = 0n;
@@ -193,34 +192,28 @@
 
 <div class="glass-container">
   <!-- Sidebar Navigation -->
-  <aside class="sidebar" class:collapsed={!sidebarExpanded}>
+  <aside class="sidebar" class:collapsed={sidebarCollapsed}>
     <div class="brand">
-      <!-- Nano Banana Logo -->
-      <svg class="brand-logo" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-terracotta)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M5 21c4-1 12-4 15-16.5" />
-        <path d="M5 21c7.5-6.5 12-11.5 15-16.5" />
-        <circle cx="20" cy="4.5" r="1.5" fill="var(--accent-terracotta)" stroke="none" />
-        <circle cx="5" cy="21" r="1.5" fill="var(--accent-terracotta)" stroke="none" />
-      </svg>
-      {#if sidebarExpanded}
+      <div class="brand-dot"></div>
+      {#if !sidebarCollapsed}
         <span class="brand-name">wisp</span>
       {/if}
     </div>
 
     <nav class="nav-links">
-      <button class="nav-btn" class:active={activeTab === 'dashboard'} on:click={() => activeTab = 'dashboard'}>
+      <button class="nav-btn" class:active={activeTab === 'dashboard'} on:click={() => activeTab = 'dashboard'} title="Dashboard">
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="7" height="9" rx="1" />
           <rect x="14" y="3" width="7" height="5" rx="1" />
           <rect x="14" y="12" width="7" height="9" rx="1" />
           <rect x="3" y="16" width="7" height="5" rx="1" />
         </svg>
-        {#if sidebarExpanded}
-          <span class="nav-text">Dashboard</span>
+        {#if !sidebarCollapsed}
+          <span>Dashboard</span>
         {/if}
       </button>
 
-      <button class="nav-btn" class:active={activeTab === 'settings'} on:click={() => activeTab = 'settings'}>
+      <button class="nav-btn" class:active={activeTab === 'settings'} on:click={() => activeTab = 'settings'} title="Settings">
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
           <line x1="4" y1="21" x2="4" y2="14" />
           <line x1="4" y1="10" x2="4" y2="3" />
@@ -232,27 +225,22 @@
           <line x1="9" y1="8" x2="15" y2="8" />
           <line x1="17" y1="16" x2="23" y2="16" />
         </svg>
-        {#if sidebarExpanded}
-          <span class="nav-text">Settings</span>
+        {#if !sidebarCollapsed}
+          <span>Settings</span>
         {/if}
       </button>
 
-      <!-- Collapse Toggle -->
-      <button class="nav-btn" style="margin-top: auto;" on:click={() => sidebarExpanded = !sidebarExpanded}>
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-          {#if sidebarExpanded}
-            <polyline points="15 18 9 12 15 6" />
-          {:else}
-            <polyline points="9 18 15 12 9 6" />
-          {/if}
+      <button class="nav-btn collapse-toggle" style="margin-top: auto;" on:click={() => sidebarCollapsed = !sidebarCollapsed} title={sidebarCollapsed ? "Expand" : "Collapse"}>
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate({sidebarCollapsed ? 180 : 0}deg); transition: transform 0.3s ease;">
+          <polyline points="15 18 9 12 15 6" />
         </svg>
-        {#if sidebarExpanded}
-          <span class="nav-text">Collapse</span>
+        {#if !sidebarCollapsed}
+          <span>Collapse</span>
         {/if}
       </button>
     </nav>
 
-    {#if sidebarExpanded}
+    {#if !sidebarCollapsed}
       <div class="sidebar-footer">
         Build 108
       </div>

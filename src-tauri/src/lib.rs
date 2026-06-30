@@ -20,35 +20,27 @@ fn generate_pairing_code() -> String {
 }
 
 #[tauri::command]
-async fn open_file_dialog() -> Result<String, String> {
-    tokio::task::spawn_blocking(|| {
-        if let Some(file_path) = rfd::FileDialog::new()
-            .set_title("Select File to Send")
-            .pick_file()
-        {
-            Ok(file_path.to_string_lossy().into_owned())
-        } else {
-            Err("File selection cancelled".to_string())
-        }
-    })
-    .await
-    .map_err(|e| format!("Dialog thread join failed: {e}"))?
+fn open_file_dialog() -> Result<String, String> {
+    if let Some(file_path) = rfd::FileDialog::new()
+        .set_title("Select File to Send")
+        .pick_file()
+    {
+        Ok(file_path.to_string_lossy().into_owned())
+    } else {
+        Err("File selection cancelled".to_string())
+    }
 }
 
 #[tauri::command]
-async fn open_dir_dialog() -> Result<String, String> {
-    tokio::task::spawn_blocking(|| {
-        if let Some(dir_path) = rfd::FileDialog::new()
-            .set_title("Select Download Directory")
-            .pick_folder()
-        {
-            Ok(dir_path.to_string_lossy().into_owned())
-        } else {
-            Err("Directory selection cancelled".to_string())
-        }
-    })
-    .await
-    .map_err(|e| format!("Dialog thread join failed: {e}"))?
+fn open_dir_dialog() -> Result<String, String> {
+    if let Some(dir_path) = rfd::FileDialog::new()
+        .set_title("Select Download Directory")
+        .pick_folder()
+    {
+        Ok(dir_path.to_string_lossy().into_owned())
+    } else {
+        Err("Directory selection cancelled".to_string())
+    }
 }
 
 #[tauri::command]

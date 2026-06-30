@@ -65,10 +65,11 @@
     if (unlistenError) unlistenError();
   }
 
-  async function handleSend() {
+  let isDragging = false;
+
+  async function startSendSession(filepath: string) {
     try {
-      const path = await invoke('open_file_dialog');
-      currentFile = path;
+      currentFile = filepath;
       pairingCode = await invoke('generate_pairing_code');
       transferState = 'waiting';
 
@@ -106,9 +107,51 @@
       });
 
     } catch (err: any) {
-      if (err !== 'File selection cancelled') {
-        errorMessage = err.toString();
+      const errStr = err?.toString() || '';
+      if (!errStr.includes('cancelled') && !errStr.includes('Cancel')) {
+        errorMessage = errStr;
         transferState = 'error';
+      }
+    }
+  }
+
+  async function handleSend() {
+    try {
+      const path = await invoke('open_file_dialog');
+      if (path) {
+        await startSendSession(path);
+      }
+    } catch (err: any) {
+      const errStr = err?.toString() || '';
+      if (!errStr.includes('cancelled') && !errStr.includes('Cancel')) {
+        errorMessage = errStr;
+        transferState = 'error';
+      }
+    }
+  }
+
+  function handleDragOver(e: DragEvent) {
+    e.preventDefault();
+    isDragging = true;
+  }
+
+  function handleDragLeave() {
+    isDragging = false;
+  }
+
+  async function handleDrop(e: DragEvent) {
+    e.preventDefault();
+    isDragging = false;
+    
+    if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      // Inside Tauri, File objects from HTML5 drag-and-drop contain a custom .path property:
+      const path = (file as any).path;
+      if (path) {
+        await startSendSession(path);
+      } else {
+        // Fallback for standard browsers in preview
+        await startSendSession('/mock/dragged/' + file.name);
       }
     }
   }
@@ -260,7 +303,14 @@
         <!-- Drag & Drop Zone / Send Picker -->
         <!-- svelte-ignore a11y-click-events-have-key-events -->
         <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div class="drop-zone" on:click={handleSend}>
+        <div 
+          class="drop-zone" 
+          class:dragging={isDragging}
+          on:dragover={handleDragOver}
+          on:dragleave={handleDragLeave}
+          on:drop={handleDrop}
+          on:click={handleSend}
+        >
           <svg class="drop-icon" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
             <polyline points="14 2 14 8 20 8" />

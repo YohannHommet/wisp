@@ -266,6 +266,11 @@ body {
   border-color: rgba(138, 154, 134, 0.3);
 }
 
+.drop-zone.dragging {
+  background: rgba(138, 154, 134, 0.03);
+  border-color: rgba(138, 154, 134, 0.55);
+}
+
 .drop-icon {
   width: 24px;
   height: 24px;

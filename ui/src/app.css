@@ -413,12 +413,21 @@ body {
   overflow: hidden;
 }
 
-/* Polished Flowing Progress Gradient */
+/* Polished Flowing Progress Gradient with active Shimmer Animation */
 .linear-progress-bar {
   height: 100%;
-  background: linear-gradient(90deg, #d27d56 0%, #f59e0b 50%, #8a9a86 100%);
+  background: linear-gradient(
+    90deg, 
+    #d27d56 0%, 
+    #f59e0b 25%, 
+    #8a9a86 50%, 
+    #f59e0b 75%, 
+    #d27d56 100%
+  );
+  background-size: 200% 100%;
   border-radius: 2px;
   transition: width 0.1s linear;
+  animation: shimmer 1.5s linear infinite;
 }
 
 .transfer-meta {
@@ -474,4 +483,40 @@ body {
 @keyframes pulse {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { background-position: 0% 0%; }
+  100% { background-position: -200% 0%; }
+}
+
+/* Network Status Badge */
+.network-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(138, 154, 134, 0.05);
+  border: 1px solid rgba(138, 154, 134, 0.15);
+  padding: 6px 12px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-sage);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  height: fit-content;
+}
+
+.network-badge.relay-mode {
+  background: rgba(210, 125, 86, 0.04);
+  border-color: rgba(210, 125, 86, 0.15);
+  color: var(--accent-terracotta);
+}
+
+.badge-dot {
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
 }

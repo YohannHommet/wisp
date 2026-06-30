@@ -65,6 +65,19 @@
     if (unlistenError) unlistenError();
   }
 
+  let copied = false;
+  async function copyCodeToClipboard() {
+    try {
+      await navigator.clipboard.writeText(pairingCode);
+      copied = true;
+      setTimeout(() => {
+        copied = false;
+      }, 1500);
+    } catch (e) {
+      console.error("Failed to copy pairing code", e);
+    }
+  }
+
   let isDragging = false;
 
   async function startSendSession(filepath: string) {
@@ -294,9 +307,15 @@
   <!-- Main View Area -->
   <main class="main-content">
     {#if activeTab === 'dashboard'}
-      <div class="view-header">
-        <h2>Send & Receive</h2>
-        <p>Transfer secure files peer-to-peer without servers</p>
+      <div class="view-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div>
+          <h2>Send & Receive</h2>
+          <p>Transfer secure files peer-to-peer without servers</p>
+        </div>
+        <div class="network-badge" class:relay-mode={!!relayUrl}>
+          <div class="badge-dot"></div>
+          <span>{relayUrl ? 'Relay Active' : 'LAN Only'}</span>
+        </div>
       </div>
 
       {#if transferState === 'idle'}
@@ -331,6 +350,7 @@
               class="input-glow" 
               placeholder="Enter pairing code..." 
               bind:value={enteredCode} 
+              on:keydown={(e) => e.key === 'Enter' && handleReceive()}
             />
             <button class="btn-primary" on:click={handleReceive}>Receive</button>
           </div>
@@ -342,12 +362,18 @@
           <span class="present-label">Your Pairing Code</span>
           <!-- svelte-ignore a11y-click-events-have-key-events -->
           <!-- svelte-ignore a11y-no-static-element-interactions -->
-          <div class="pairing-code" on:click={() => navigator.clipboard.writeText(pairingCode)}>
+          <div class="pairing-code" on:click={copyCodeToClipboard}>
             {pairingCode}
-            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-            </svg>
+            {#if copied}
+              <svg width="16" height="16" fill="none" stroke="var(--accent-sage)" stroke-width="2.5" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            {:else}
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            {/if}
           </div>
           <span class="drop-subtext">Click to copy code. Send it to the receiver.</span>
           <span class="waiting-sub">Awaiting peer connection...</span>

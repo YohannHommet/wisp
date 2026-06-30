@@ -194,10 +194,17 @@
   <!-- Sidebar Navigation -->
   <aside class="sidebar" class:collapsed={sidebarCollapsed}>
     <div class="brand">
-      <div class="brand-dot"></div>
       {#if !sidebarCollapsed}
-        <span class="brand-name">wisp</span>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div class="brand-dot"></div>
+          <span class="brand-name">wisp</span>
+        </div>
       {/if}
+      <button class="collapse-btn-top" class:collapsed={sidebarCollapsed} on:click={() => sidebarCollapsed = !sidebarCollapsed} title={sidebarCollapsed ? "Expand" : "Collapse"}>
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate({sidebarCollapsed ? 180 : 0}deg); transition: transform 0.3s ease;">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+      </button>
     </div>
 
     <nav class="nav-links">
@@ -227,15 +234,6 @@
         </svg>
         {#if !sidebarCollapsed}
           <span>Settings</span>
-        {/if}
-      </button>
-
-      <button class="nav-btn collapse-toggle" style="margin-top: auto;" on:click={() => sidebarCollapsed = !sidebarCollapsed} title={sidebarCollapsed ? "Expand" : "Collapse"}>
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate({sidebarCollapsed ? 180 : 0}deg); transition: transform 0.3s ease;">
-          <polyline points="15 18 9 12 15 6" />
-        </svg>
-        {#if !sidebarCollapsed}
-          <span>Collapse</span>
         {/if}
       </button>
     </nav>

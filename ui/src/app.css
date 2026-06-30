@@ -107,8 +107,27 @@ body {
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
   margin-bottom: 48px;
+  width: 100%;
+}
+
+.collapse-btn-top {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border-radius: 8px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.collapse-btn-top:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
 }
 
 .brand-dot {

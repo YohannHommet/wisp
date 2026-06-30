@@ -195,11 +195,12 @@
   <!-- Sidebar Navigation -->
   <aside class="sidebar" class:collapsed={!sidebarExpanded}>
     <div class="brand">
-      <!-- Wisp Sleek Logo (Wind / Stream curves) -->
-      <svg class="brand-logo" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-terracotta)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M9.59 4.59A2 2 0 1 1 11 8H2" />
-        <path d="M12.59 19.41A2 2 0 1 0 14 16H2" />
-        <path d="M15.73 7.73A2.5 2.5 0 1 1 19.5 12H2" />
+      <!-- Nano Banana Logo -->
+      <svg class="brand-logo" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-terracotta)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 21c4-1 12-4 15-16.5" />
+        <path d="M5 21c7.5-6.5 12-11.5 15-16.5" />
+        <circle cx="20" cy="4.5" r="1.5" fill="var(--accent-terracotta)" stroke="none" />
+        <circle cx="5" cy="21" r="1.5" fill="var(--accent-terracotta)" stroke="none" />
       </svg>
       {#if sidebarExpanded}
         <span class="brand-name">wisp</span>

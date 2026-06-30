@@ -1,0 +1,71 @@
+name: Release Tauri App
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest' # Apple Silicon & Intel Universal builds
+            args: '--target universal-apple-darwin'
+          - platform: 'ubuntu-22.04' # Linux AppImage & Debian Package
+            args: ''
+          - platform: 'windows-latest' # Windows MSI Installer
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Target for universal macOS builds
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            webkit2gtk-4.1 \
+            libwebkit2gtk-4.1-dev \
+            libsoup-3.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            librust-gdk-sys-dev
+
+      - name: Install frontend dependencies
+        run: |
+          npm --prefix ui install
+
+      - name: Build Svelte frontend assets
+        run: |
+          npm --prefix ui run build
+
+      - name: Build Tauri desktop binaries and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Wisp Desktop Client v__VERSION__'
+          releaseBody: 'Automatic release of Wisp Desktop Client client built by GitHub Actions.'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

@@ -111,12 +111,10 @@ body {
   margin-bottom: 48px;
 }
 
-.brand-dot {
-  width: 8px;
-  height: 8px;
-  background: var(--accent-terracotta);
-  border-radius: 50%;
-  box-shadow: 0 0 10px rgba(210, 125, 86, 0.3);
+.brand-logo {
+  flex-shrink: 0;
+  stroke: var(--accent-terracotta);
+  filter: drop-shadow(0 2px 6px rgba(210, 125, 86, 0.15));
 }
 
 .brand-name {

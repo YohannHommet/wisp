@@ -195,7 +195,12 @@
   <!-- Sidebar Navigation -->
   <aside class="sidebar" class:collapsed={!sidebarExpanded}>
     <div class="brand">
-      <div class="brand-dot"></div>
+      <!-- Wisp Sleek Logo (Wind / Stream curves) -->
+      <svg class="brand-logo" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-terracotta)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9.59 4.59A2 2 0 1 1 11 8H2" />
+        <path d="M12.59 19.41A2 2 0 1 0 14 16H2" />
+        <path d="M15.73 7.73A2.5 2.5 0 1 1 19.5 12H2" />
+      </svg>
       {#if sidebarExpanded}
         <span class="brand-name">wisp</span>
       {/if}

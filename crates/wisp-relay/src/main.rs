@@ -43,6 +43,7 @@ struct AppState {
     store_cleanup_running: std::sync::atomic::AtomicBool,
     waiters_cleanup_running: std::sync::atomic::AtomicBool,
     rate_limits: DashMap<IpAddr, (u32, Instant)>,
+    trust_proxy: bool,
 }
 
 type Store = Arc<AppState>;
@@ -68,22 +69,24 @@ impl Drop for WaiterGuard {
 }
 
 fn valid_hex(s: &str, expected_len: usize) -> bool {
-    s.len() == expected_len && s.bytes().all(|b| b.is_ascii_digit() || (b >= b'a' && b <= b'f'))
+    s.len() == expected_len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn extract_ip(headers: &HeaderMap, peer_addr: SocketAddr) -> Result<IpAddr, &'static str> {
+fn extract_ip(headers: &HeaderMap, peer_addr: SocketAddr, trust_proxy: bool) -> IpAddr {
     let mut ip = peer_addr.ip();
-    // Check X-Forwarded-For first
-    if let Some(xff) = headers.get("x-forwarded-for").and_then(|h| h.to_str().ok()) {
-        if let Some(first_ip) = xff.split(',').next().map(|s| s.trim()) {
-            if let Ok(parsed) = first_ip.parse::<IpAddr>() {
+    if trust_proxy {
+        // Check X-Forwarded-For first
+        if let Some(xff) = headers.get("x-forwarded-for").and_then(|h| h.to_str().ok()) {
+            if let Some(first_ip) = xff.split(',').next().map(|s| s.trim()) {
+                if let Ok(parsed) = first_ip.parse::<IpAddr>() {
+                    ip = parsed;
+                }
+            }
+        } else if let Some(xri) = headers.get("x-real-ip").and_then(|h| h.to_str().ok()) {
+            // Fall back to X-Real-IP
+            if let Ok(parsed) = xri.trim().parse::<IpAddr>() {
                 ip = parsed;
             }
-        }
-    } else if let Some(xri) = headers.get("x-real-ip").and_then(|h| h.to_str().ok()) {
-        // Fall back to X-Real-IP
-        if let Ok(parsed) = xri.trim().parse::<IpAddr>() {
-            ip = parsed;
         }
     }
 
@@ -94,7 +97,7 @@ fn extract_ip(headers: &HeaderMap, peer_addr: SocketAddr) -> Result<IpAddr, &'st
         }
     }
 
-    Ok(ip)
+    ip
 }
 
 fn check_rate_limit(state: &Store, ip: IpAddr) -> bool {
@@ -117,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
     // CLI Help Check
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        println!("Usage: wisp-relay [port]     (default 7777)");
+        println!("Usage: wisp-relay [port] [--trust-proxy]   (default 7777)");
         return Ok(());
     }
 
@@ -128,8 +131,12 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    let trust_proxy = args.iter().any(|arg| arg == "--trust-proxy");
     let port: u16 = args
-        .get(1)
+        .iter()
+        .skip(1)
+        .filter(|&s| s != "--trust-proxy")
+        .next()
         .and_then(|s| s.parse().ok())
         .unwrap_or(7777);
 
@@ -139,6 +146,7 @@ async fn main() -> anyhow::Result<()> {
         store_cleanup_running: std::sync::atomic::AtomicBool::new(false),
         waiters_cleanup_running: std::sync::atomic::AtomicBool::new(false),
         rate_limits: DashMap::new(),
+        trust_proxy,
     });
 
     // Purge expired store entries, rate limit records, and orphaned waiters every 15s.
@@ -205,15 +213,7 @@ async fn handle_pub(
         );
     }
 
-    let ip_addr = match extract_ip(&headers, addr) {
-        Ok(ip) => ip,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": e})),
-            )
-        }
-    };
+    let ip_addr = extract_ip(&headers, addr, state.trust_proxy);
 
     if !check_rate_limit(&state, ip_addr) {
         return (
@@ -276,15 +276,7 @@ async fn handle_sub(
         );
     }
 
-    let ip_addr = match extract_ip(&headers, addr) {
-        Ok(ip) => ip,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": e})),
-            )
-        }
-    };
+    let ip_addr = extract_ip(&headers, addr, state.trust_proxy);
 
     if !check_rate_limit(&state, ip_addr) {
         return (
@@ -392,7 +384,7 @@ mod tests {
     fn test_extract_ipv4_direct() {
         let headers = HeaderMap::new();
         let peer_addr = SocketAddr::from(([192, 168, 1, 50], 12345));
-        let ip = extract_ip(&headers, peer_addr).unwrap();
+        let ip = extract_ip(&headers, peer_addr, true);
         assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)));
     }
 
@@ -401,7 +393,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "203.0.113.195, 70.41.3.18, 150.172.238.178".parse().unwrap());
         let peer_addr = SocketAddr::from(([127, 0, 0, 1], 12345));
-        let ip = extract_ip(&headers, peer_addr).unwrap();
+        let ip = extract_ip(&headers, peer_addr, true);
         assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(203, 0, 113, 195)));
     }
 
@@ -410,7 +402,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "203.0.113.196".parse().unwrap());
         let peer_addr = SocketAddr::from(([127, 0, 0, 1], 12345));
-        let ip = extract_ip(&headers, peer_addr).unwrap();
+        let ip = extract_ip(&headers, peer_addr, true);
         assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(203, 0, 113, 196)));
     }
 
@@ -422,7 +414,7 @@ mod tests {
             IpAddr::V6("::ffff:192.168.1.50".parse().unwrap()),
             12345,
         );
-        let ip = extract_ip(&headers, v6_mapped).unwrap();
+        let ip = extract_ip(&headers, v6_mapped, true);
         assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)));
     }
 
@@ -433,7 +425,7 @@ mod tests {
             IpAddr::V6("2001:db8::1".parse().unwrap()),
             12345,
         );
-        let ip = extract_ip(&headers, v6_raw).unwrap();
+        let ip = extract_ip(&headers, v6_raw, true);
         assert_eq!(ip, IpAddr::V6("2001:db8::1".parse().unwrap()));
     }
 }
@@ -453,6 +445,7 @@ mod integration_tests {
             store_cleanup_running: std::sync::atomic::AtomicBool::new(false),
             waiters_cleanup_running: std::sync::atomic::AtomicBool::new(false),
             rate_limits: DashMap::new(),
+            trust_proxy: true,
         });
         let app = Router::new()
             .route("/pub/:ch/:fp/:port", get(handle_pub))
@@ -608,6 +601,7 @@ mod integration_tests {
             store_cleanup_running: std::sync::atomic::AtomicBool::new(false),
             waiters_cleanup_running: std::sync::atomic::AtomicBool::new(false),
             rate_limits: DashMap::new(),
+            trust_proxy: true,
         });
         
         let ch = "e".repeat(32);

@@ -285,6 +285,11 @@ async fn receiver_protocol(
     let part_path = with_part_suffix(&final_path);
     let file_size = meta.size;
 
+    let mut guard = PartFileGuard {
+        path: part_path.clone(),
+        active: true,
+    };
+
     // Wrap body receive in an async block for a single cleanup site:
     // on any error between File::create and rename, delete the part file.
     let outcome: Result<()> = async {
@@ -336,10 +341,11 @@ async fn receiver_protocol(
     }
     .await;
 
-    if outcome.is_err() {
-        let _ = tokio::fs::remove_file(&part_path).await;
-        return Err(outcome.unwrap_err());
+    if let Err(e) = outcome {
+        return Err(e);
     }
+
+    guard.active = false;
 
     Ok((final_path, file_size))
 }
@@ -813,3 +819,17 @@ mod tests {
         );
     }
 }
+
+struct PartFileGuard {
+    path: PathBuf,
+    active: bool,
+}
+
+impl Drop for PartFileGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+

@@ -34,6 +34,7 @@
   let enteredCode = '';
   let relayUrl = 'https://relay.wisp.net'; // Default relay server
   let errorMessage = '';
+  let sidebarExpanded = true;
 
   // Progress metrics
   let bytesTransferred = 0n;
@@ -192,10 +193,12 @@
 
 <div class="glass-container">
   <!-- Sidebar Navigation -->
-  <aside class="sidebar">
+  <aside class="sidebar" class:collapsed={!sidebarExpanded}>
     <div class="brand">
       <div class="brand-dot"></div>
-      <span class="brand-name">wisp</span>
+      {#if sidebarExpanded}
+        <span class="brand-name">wisp</span>
+      {/if}
     </div>
 
     <nav class="nav-links">
@@ -206,7 +209,9 @@
           <rect x="14" y="12" width="7" height="9" rx="1" />
           <rect x="3" y="16" width="7" height="5" rx="1" />
         </svg>
-        Dashboard
+        {#if sidebarExpanded}
+          <span class="nav-text">Dashboard</span>
+        {/if}
       </button>
 
       <button class="nav-btn" class:active={activeTab === 'settings'} on:click={() => activeTab = 'settings'}>
@@ -221,13 +226,31 @@
           <line x1="9" y1="8" x2="15" y2="8" />
           <line x1="17" y1="16" x2="23" y2="16" />
         </svg>
-        Settings
+        {#if sidebarExpanded}
+          <span class="nav-text">Settings</span>
+        {/if}
+      </button>
+
+      <!-- Collapse Toggle -->
+      <button class="nav-btn" style="margin-top: auto;" on:click={() => sidebarExpanded = !sidebarExpanded}>
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          {#if sidebarExpanded}
+            <polyline points="15 18 9 12 15 6" />
+          {:else}
+            <polyline points="9 18 15 12 9 6" />
+          {/if}
+        </svg>
+        {#if sidebarExpanded}
+          <span class="nav-text">Collapse</span>
+        {/if}
       </button>
     </nav>
 
-    <div class="sidebar-footer">
-      Build 108
-    </div>
+    {#if sidebarExpanded}
+      <div class="sidebar-footer">
+        Build 108
+      </div>
+    {/if}
   </aside>
 
   <!-- Main View Area -->

@@ -68,6 +68,57 @@ pub fn make_server_config() -> Result<ServerSetup> {
     })
 }
 
+/// Build a QUIC server config with a persistent self-signed certificate loaded or created in ~/.config/wisp/
+pub fn make_persistent_server_config() -> Result<ServerSetup> {
+    let config_dir = dirs::config_dir()
+        .context("getting config dir")?
+        .join("wisp");
+    let cert_path = config_dir.join("peer_cert.der");
+    let key_path = config_dir.join("peer_key.der");
+
+    let (cert_der, key_der) = if cert_path.exists() && key_path.exists() {
+        let c = std::fs::read(&cert_path)?;
+        let k = std::fs::read(&key_path)?;
+        (CertificateDer::from(c), PrivatePkcs8KeyDer::from(k))
+    } else {
+        std::fs::create_dir_all(&config_dir)?;
+        let rcgen::CertifiedKey { cert, key_pair } =
+            rcgen::generate_simple_self_signed(vec!["wisp".to_string()])
+                .context("generating self-signed certificate")?;
+        let c_der = cert.der().to_vec();
+        let k_der = key_pair.serialize_der();
+        std::fs::write(&cert_path, &c_der)?;
+        std::fs::write(&key_path, &k_der)?;
+        (CertificateDer::from(c_der), PrivatePkcs8KeyDer::from(k_der))
+    };
+
+    let fingerprint = *blake3::hash(cert_der.as_ref()).as_bytes();
+    let key = PrivateKeyDer::Pkcs8(key_der);
+
+    let mut crypto = rustls::ServerConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()
+        .context("rustls protocol versions")?
+        .with_no_client_auth()
+        .with_single_cert(vec![cert_der], key)
+        .context("rustls single cert")?;
+    crypto.alpn_protocols = vec![PROTOCOL.as_bytes().to_vec()];
+
+    let quic = QuicServerConfig::try_from(crypto).context("quic server config")?;
+    let mut config = ServerConfig::with_crypto(Arc::new(quic));
+
+    let mut transport = TransportConfig::default();
+    transport.max_concurrent_uni_streams(0u8.into());
+    transport.stream_receive_window(8_388_608u32.into());
+    transport.receive_window(12_582_912u32.into());
+    transport.send_window(8_388_608u64);
+    config.transport_config(Arc::new(transport));
+
+    Ok(ServerSetup {
+        config,
+        fingerprint,
+    })
+}
+
 /// Build a QUIC client config that pins the sender's certificate fingerprint.
 pub fn make_client_config(expected_fingerprint: [u8; 32]) -> Result<ClientConfig> {
     let verifier = Arc::new(PinnedVerifier {

@@ -6261,7 +6261,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
+ "hex",
+ "local-ip-address",
  "log",
+ "mdns-sd",
+ "quinn",
  "rfd",
  "serde",
  "serde_json",

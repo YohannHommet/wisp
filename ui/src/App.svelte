@@ -7,6 +7,10 @@
     if (cmd === 'generate_pairing_code') return '7-tiger-saturn';
     if (cmd === 'open_file_dialog') return '/mock/path/to/project_video.mp4';
     if (cmd === 'open_dir_dialog') return '/mock/downloads';
+    if (cmd === 'get_device_info') return { friendly_name: 'Wisp Client (Preview)', fingerprint: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' };
+    if (cmd === 'get_trusted_peers') return [
+      { friendly_name: 'Trusted Peer (Mock)', certificate_fingerprint: 'mock-fingerprint', last_seen_ip: '192.168.1.100' }
+    ];
     return null;
   };
 
@@ -15,12 +19,49 @@
     return () => {};
   };
 
+  // Persistent LAN Device Discovery States
+  let myDeviceInfo = { friendly_name: 'Wisp Client (Preview)', fingerprint: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' };
+  let discoveredPeers: any[] = [];
+  let trustedPeers: any[] = [];
+  
+  let showPairingModal = false;
+  let pairingTargetPeer: any = null;
+  let pairingMode: 'idle' | 'hosting' | 'connecting' | 'success' | 'error' = 'idle';
+  let pairingCodeInput = '';
+  let incomingPairedFile: any = null;
+  let unlistenPeers: any = null;
+  let unlistenIncomingFile: any = null;
+
+  async function loadPeersAndInfo() {
+    try {
+      const info = await invoke('get_device_info');
+      if (info) myDeviceInfo = info;
+      
+      const list = await invoke('get_trusted_peers');
+      if (list) trustedPeers = list;
+    } catch (e) {
+      console.warn("Failed to load device info or trusted peers list:", e);
+    }
+  }
+
   onMount(async () => {
     if (window.__TAURI_INTERNALS__) {
       const core = await import('@tauri-apps/api/core');
       const event = await import('@tauri-apps/api/event');
       invoke = core.invoke;
       listen = event.listen;
+
+      await loadPeersAndInfo();
+
+      // Listen to peer updates from background discovery thread
+      unlistenPeers = await listen('peers-updated', (event: any) => {
+        discoveredPeers = event.payload || [];
+      });
+
+      // Listen to incoming file requests from trusted peers
+      unlistenIncomingFile = await listen('incoming-paired-file', (event: any) => {
+        incomingPairedFile = event.payload;
+      });
     }
   });
 
@@ -36,12 +77,12 @@
   let errorMessage = '';
 
   // Progress metrics
-  let bytesTransferred = 0n;
-  let totalBytes = 0n;
+  let bytesTransferred = BigInt(0);
+  let totalBytes = BigInt(0);
   let transferSpeed = '0 MB/s';
   let eta = 'Calculating...';
   
-  let lastBytes = 0n;
+  let lastBytes = BigInt(0);
   let lastTime = Date.now();
   let startTime = Date.now();
 
@@ -57,9 +98,9 @@
     pairingCode = '';
     enteredCode = '';
     errorMessage = '';
-    bytesTransferred = 0n;
-    totalBytes = 0n;
-    lastBytes = 0n;
+    bytesTransferred = BigInt(0);
+    totalBytes = BigInt(0);
+    lastBytes = BigInt(0);
     transferSpeed = '0 MB/s';
     eta = 'Calculating...';
     if (unlistenProgress) {
@@ -75,6 +116,8 @@
   onDestroy(() => {
     if (unlistenProgress) unlistenProgress();
     if (unlistenError) unlistenError();
+    if (unlistenPeers) unlistenPeers();
+    if (unlistenIncomingFile) unlistenIncomingFile();
   });
 
   let copied = false;
@@ -87,6 +130,170 @@
       }, 1500);
     } catch (e) {
       console.error("Failed to copy pairing code", e);
+    }
+  }
+
+  // Start hosting a pairing session (role A)
+  async function hostPairing() {
+    try {
+      pairingMode = 'hosting';
+      // Generate code
+      pairingCodeInput = await invoke('generate_pairing_code');
+      activeSessionId = Math.random().toString(36).substring(7);
+      
+      // Call start_pairing_host
+      const result = await invoke('start_pairing_host', {
+        sessionId: activeSessionId,
+        code: pairingCodeInput
+      });
+
+      if (result) {
+        pairingMode = 'success';
+        await loadPeersAndInfo();
+        setTimeout(() => {
+          showPairingModal = false;
+          pairingMode = 'idle';
+        }, 1500);
+      }
+    } catch (err: any) {
+      errorMessage = err?.toString() || 'Pairing timed out or failed';
+      pairingMode = 'error';
+    }
+  }
+
+  // Connect to a hosting pairing peer (role B)
+  async function connectPairing() {
+    if (!pairingCodeInput || !pairingTargetPeer) return;
+    try {
+      pairingMode = 'connecting';
+      const result = await invoke('pair_with_peer', {
+        code: pairingCodeInput,
+        address: pairingTargetPeer.address,
+        fingerprint: pairingTargetPeer.fingerprint
+      });
+
+      if (result) {
+        pairingMode = 'success';
+        await loadPeersAndInfo();
+        setTimeout(() => {
+          showPairingModal = false;
+          pairingMode = 'idle';
+        }, 1500);
+      }
+    } catch (err: any) {
+      errorMessage = err?.toString() || 'Pairing connection failed';
+      pairingMode = 'error';
+    }
+  }
+
+  // Delete a paired peer
+  async function deletePeer(fingerprint: string) {
+    try {
+      await invoke('delete_trusted_peer', { fingerprint });
+      await loadPeersAndInfo();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  // Direct Send to Paired Peer (Role A)
+  async function directSendToPeer(peer: any) {
+    try {
+      const filepath = await invoke('open_file_dialog');
+      if (!filepath) return;
+
+      resetTransfer();
+      activeSessionId = Math.random().toString(36).substring(7);
+      currentFile = filepath;
+      
+      // The pairing code is set to the peer's certificate fingerprint!
+      pairingCode = peer.certificate_fingerprint;
+      transferState = 'waiting';
+
+      // Setup progress/error listeners
+      unlistenProgress = await listen('transfer-progress', (event: any) => {
+        const payload = event.payload;
+        if (transferState !== 'transferring') {
+          transferState = 'transferring';
+          startTime = Date.now();
+          lastTime = Date.now();
+        }
+        bytesTransferred = BigInt(payload.transferred);
+        totalBytes = BigInt(payload.total);
+        calculateSpeedAndEta();
+      });
+
+      unlistenError = await listen('transfer-error', (event: any) => {
+        errorMessage = event.payload;
+        transferState = 'error';
+      });
+
+      // Start standard send session using peer fingerprint as code word
+      invoke('start_send_session', {
+        sessionId: activeSessionId,
+        filepath: currentFile,
+        relay: null // local LAN direct transfer!
+      }).then(() => {
+        if (transferState === 'transferring') {
+          transferState = 'done';
+        }
+      }).catch((err) => {
+        errorMessage = err;
+        transferState = 'error';
+      });
+
+    } catch (err: any) {
+      errorMessage = err?.toString() || 'Direct send failed';
+      transferState = 'error';
+    }
+  }
+
+  // Accept incoming transfer request from paired peer (Role B)
+  async function acceptIncomingPairedFile() {
+    if (!incomingPairedFile) return;
+    try {
+      const codeToUse = myDeviceInfo.fingerprint; // our own fingerprint is the pairing code!
+      incomingPairedFile = null; // dismiss popup
+
+      const dir = await invoke('open_dir_dialog');
+      if (!dir) return;
+
+      resetTransfer();
+      downloadDir = dir;
+      transferState = 'transferring';
+      startTime = Date.now();
+      lastTime = Date.now();
+      activeSessionId = Math.random().toString(36).substring(7);
+
+      unlistenProgress = await listen('transfer-progress', (event: any) => {
+        const payload = event.payload;
+        bytesTransferred = BigInt(payload.transferred);
+        totalBytes = BigInt(payload.total);
+        calculateSpeedAndEta();
+      });
+
+      unlistenError = await listen('transfer-error', (event: any) => {
+        errorMessage = event.payload;
+        transferState = 'error';
+      });
+
+      invoke('start_recv_session', {
+        sessionId: activeSessionId,
+        code: codeToUse,
+        downloadDir,
+        relay: null // LAN direct!
+      }).then(() => {
+        if (transferState === 'transferring') {
+          transferState = 'done';
+        }
+      }).catch((err) => {
+        errorMessage = err;
+        transferState = 'error';
+      });
+
+    } catch (err: any) {
+      errorMessage = err?.toString() || 'Direct receive failed';
+      transferState = 'error';
     }
   }
 
@@ -263,8 +470,15 @@
     }
   }
 
+  function getProgressPercent(transferred: bigint, total: bigint): number {
+    if (total > BigInt(0)) {
+      return Math.round(Number(transferred * BigInt(100) / total));
+    }
+    return 0;
+  }
+
   // Helper: formatted progress percentage
-  $: progressPercent = totalBytes > 0n ? Math.round(Number(bytesTransferred * 100n / totalBytes)) : 0;
+  $: progressPercent = getProgressPercent(bytesTransferred, totalBytes);
 </script>
 
 <div class="glass-container">
@@ -309,8 +523,12 @@
     </nav>
 
     {#if !sidebarCollapsed}
-      <div class="sidebar-footer">
-        Build 108
+      <div class="sidebar-device-card">
+        <span class="device-label">Local Identity</span>
+        <span class="device-name">{myDeviceInfo.friendly_name}</span>
+        <span class="device-fp" title={myDeviceInfo.fingerprint}>
+          {myDeviceInfo.fingerprint ? myDeviceInfo.fingerprint.substring(0, 16) + '...' : 'Generating Identity...'}
+        </span>
       </div>
     {/if}
 
@@ -318,7 +536,7 @@
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div class="grab-boundary-zone" on:click={() => sidebarCollapsed = !sidebarCollapsed}></div>
-    <button class="floating-toggle-btn" on:click={() => sidebarCollapsed = !sidebarCollapsed} title={sidebarCollapsed ? "Expand" : "Collapse"}>
+    <button class="floating-toggle-btn" on:click={() => sidebarCollapsed = !sidebarCollapsed} title={sidebarCollapsed ? "Expand" : "Collapse"} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}>
       <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="transform: rotate({sidebarCollapsed ? 180 : 0}deg); transition: transform 0.3s ease;">
         <polyline points="15 18 9 12 15 6" />
       </svg>
@@ -328,6 +546,26 @@
   <!-- Main View Area -->
   <main class="main-content">
     {#if activeTab === 'dashboard'}
+      {#if incomingPairedFile}
+        <div class="paired-incoming-banner">
+          <div class="banner-content">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            <div>
+              <span class="banner-title">Incoming File Transfer</span>
+              <p class="banner-desc">Trusted device <strong>{incomingPairedFile.friendly_name}</strong> wants to send you a file.</p>
+            </div>
+          </div>
+          <div class="banner-actions">
+            <button class="banner-btn accept" on:click={acceptIncomingPairedFile}>Accept</button>
+            <button class="banner-btn decline" on:click={() => incomingPairedFile = null}>Decline</button>
+          </div>
+        </div>
+      {/if}
+
       <div class="view-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
         <div>
           <h2>Send & Receive</h2>
@@ -376,6 +614,141 @@
             <button class="btn-primary" on:click={handleReceive}>Receive</button>
           </div>
         </div>
+
+        <!-- LAN Devices Peer Discovery Dashboard -->
+        <div class="lan-dashboard">
+          <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 12px;">
+            <span class="drop-subtext" style="text-transform: uppercase; font-weight: 600; margin: 0;">LAN Devices</span>
+            <button class="link-btn" on:click={() => { showPairingModal = true; pairingTargetPeer = null; pairingMode = 'idle'; pairingCodeInput = ''; }}>+ Pair Device</button>
+          </div>
+
+          <div class="peer-grid">
+            <!-- Discovered Online Devices -->
+            {#each discoveredPeers as peer}
+              {@const isTrusted = trustedPeers.some(tp => tp.certificate_fingerprint === peer.fingerprint)}
+              <div class="peer-card">
+                <div class="peer-header">
+                  <div class="peer-status online"></div>
+                  <span class="peer-name">{peer.friendly_name}</span>
+                </div>
+                <span class="peer-address">{peer.address}</span>
+                <div class="peer-actions">
+                  {#if isTrusted}
+                    <button class="peer-action-btn send" on:click={() => directSendToPeer(trustedPeers.find(tp => tp.certificate_fingerprint === peer.fingerprint))}>Send File</button>
+                  {:else}
+                    <button class="peer-action-btn pair" on:click={() => { pairingTargetPeer = peer; showPairingModal = true; pairingMode = 'idle'; pairingCodeInput = ''; }}>Pair Device</button>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+
+            <!-- Trusted Peers Offline List -->
+            {#each trustedPeers as trusted}
+              {@const isOnline = discoveredPeers.some(p => p.fingerprint === trusted.certificate_fingerprint)}
+              {#if !isOnline}
+                <div class="peer-card offline">
+                  <div class="peer-header">
+                    <div class="peer-status offline"></div>
+                    <span class="peer-name">{trusted.friendly_name}</span>
+                  </div>
+                  <span class="peer-address">Offline</span>
+                  <div class="peer-actions">
+                    <button class="peer-action-btn delete" on:click={() => deletePeer(trusted.certificate_fingerprint)}>Forget</button>
+                  </div>
+                </div>
+              {/if}
+            {/each}
+
+            {#if discoveredPeers.length === 0 && trustedPeers.length === 0}
+              <div class="lan-empty-state">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                  <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14h-2v-2h2zm0-4h-2V7h2z" />
+                </svg>
+                <span>No local devices found. Make sure devices are connected to the same Wi-Fi.</span>
+              </div>
+            {/if}
+          </div>
+        </div>
+
+        {#if showPairingModal}
+          <!-- svelte-ignore a11y-click-events-have-key-events -->
+          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <div class="modal-backdrop" on:click={() => showPairingModal = false}>
+            <div class="modal-content glass-card" on:click|stopPropagation>
+              <div class="modal-header">
+                <h3>Pair Local Device</h3>
+                <button class="close-btn" on:click={() => showPairingModal = false}>&times;</button>
+              </div>
+
+              <div class="modal-body">
+                {#if pairingTargetPeer}
+                  <!-- Connecting mode: Client connecting to target peer -->
+                  <div class="modal-step">
+                    <span class="step-label">Pairing with {pairingTargetPeer.friendly_name}</span>
+                    <p class="step-desc">Enter the 6-digit pairing code displayed on the other device's screen:</p>
+                    
+                    {#if pairingMode === 'idle' || pairingMode === 'connecting'}
+                      <div class="code-row" style="margin-top: 12px;">
+                        <input 
+                          type="text" 
+                          class="input-glow center-align" 
+                          placeholder="e.g. 7-tiger-saturn" 
+                          bind:value={pairingCodeInput} 
+                        />
+                        <button class="btn-primary" on:click={connectPairing} disabled={pairingMode === 'connecting'}>
+                          {pairingMode === 'connecting' ? 'Connecting...' : 'Connect'}
+                        </button>
+                      </div>
+                    {:else if pairingMode === 'success'}
+                      <div class="pairing-status success">
+                        <svg width="24" height="24" fill="none" stroke="var(--accent-sage)" stroke-width="2.5" viewBox="0 0 24 24">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                        <span>Devices Successfully Paired!</span>
+                      </div>
+                    {:else if pairingMode === 'error'}
+                      <div class="pairing-status error">
+                        <span style="color: var(--accent-coral);">{errorMessage}</span>
+                        <button class="btn-primary" style="margin-top: 12px;" on:click={() => pairingMode = 'idle'}>Retry</button>
+                      </div>
+                    {/if}
+                  </div>
+                {:else}
+                  <!-- Hosting mode: Generate pairing code for others to enter -->
+                  <div class="modal-step">
+                    <span class="step-label">Generate Pairing Code</span>
+                    <p class="step-desc">Share this code with the peer device to establish a trust relationship:</p>
+                    
+                    {#if pairingMode === 'idle' || pairingMode === 'hosting'}
+                      <button class="btn-primary" style="margin: 16px 0;" on:click={hostPairing} disabled={pairingMode === 'hosting'}>
+                        {pairingMode === 'hosting' ? 'Awaiting Connection...' : 'Generate Code & Host'}
+                      </button>
+                      
+                      {#if pairingMode === 'hosting'}
+                        <div class="pairing-code" style="font-size: 24px; justify-content: center; margin: 12px 0;">
+                          {pairingCodeInput}
+                        </div>
+                        <span class="waiting-sub">Awaiting peer validation request...</span>
+                      {/if}
+                    {:else if pairingMode === 'success'}
+                      <div class="pairing-status success">
+                        <svg width="24" height="24" fill="none" stroke="var(--accent-sage)" stroke-width="2.5" viewBox="0 0 24 24">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                        <span>Devices Successfully Paired!</span>
+                      </div>
+                    {:else if pairingMode === 'error'}
+                      <div class="pairing-status error">
+                        <span style="color: var(--accent-coral);">{errorMessage}</span>
+                        <button class="btn-primary" style="margin-top: 12px;" on:click={() => pairingMode = 'idle'}>Retry</button>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {/if}
 
       {:else if transferState === 'waiting'}
         <!-- Waiting on peer to connect screen -->

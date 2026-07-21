@@ -10,11 +10,20 @@ pub struct Timeouts {
     pub block_transfer: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrustedPeer {
+    pub friendly_name: String,
+    pub certificate_fingerprint: String,
+    pub last_seen_ip: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     pub default_relay: Option<String>,
     pub default_download_dir: Option<String>,
     pub timeouts: Option<Timeouts>,
+    #[serde(default)]
+    pub trusted_peers: std::collections::HashMap<String, TrustedPeer>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +56,20 @@ impl Config {
         } else {
             Ok(Config::default())
         }
+    }
+
+    /// Save config back to ~/.config/wisp/config.toml
+    pub fn save(&self) -> Result<()> {
+        let path = Self::default_path().context("getting default config path")?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating config parent directory {}", parent.display()))?;
+        }
+        let toml_str = toml::to_string_pretty(self)
+            .context("serializing configuration to TOML")?;
+        std::fs::write(&path, toml_str)
+            .with_context(|| format!("writing config file to {}", path.display()))?;
+        Ok(())
     }
 
     /// Default configuration path
@@ -180,5 +203,21 @@ mod tests {
 
         let download_dir = config.resolve_download_dir(None);
         assert_eq!(download_dir, PathBuf::from("/config/downloads"));
+    }
+
+    #[test]
+    fn test_config_serialize_deserialize_trusted_peers() {
+        let mut config = Config::default();
+        let peer = TrustedPeer {
+            friendly_name: "Test Laptop".to_string(),
+            certificate_fingerprint: "sha256-hash-value".to_string(),
+            last_seen_ip: Some("192.168.1.50".to_string()),
+        };
+        config.trusted_peers.insert("peer-uuid-1".to_string(), peer.clone());
+
+        let serialized = toml::to_string(&config).unwrap();
+        let parsed: Config = toml::from_str(&serialized).unwrap();
+        
+        assert_eq!(parsed.trusted_peers.get("peer-uuid-1"), Some(&peer));
     }
 }

@@ -224,6 +224,24 @@ body {
   padding: 44px 48px;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+}
+
+.main-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.main-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.main-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+
+.main-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .view-header {
@@ -520,3 +538,374 @@ body {
   border-radius: 50%;
   animation: pulse 2s infinite;
 }
+
+/* Sidebar Device Card */
+.sidebar-device-card {
+  margin: auto 16px 16px 16px;
+  background: rgba(255, 255, 255, 0.015);
+  border: 1px solid var(--panel-border);
+  padding: 12px;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.device-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 700;
+}
+
+.device-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.device-fp {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+}
+
+/* Incoming Paired File Banner Overlay */
+.paired-incoming-banner {
+  background: rgba(138, 154, 134, 0.04);
+  border: 1px solid rgba(138, 154, 134, 0.2);
+  border-radius: 16px;
+  padding: 14px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.banner-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--accent-sage);
+}
+
+.banner-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: block;
+}
+
+.banner-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 2px 0 0 0;
+}
+
+.banner-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.banner-btn {
+  padding: 8px 16px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.banner-btn.accept {
+  background: var(--accent-sage);
+  border: 1px solid rgba(138, 154, 134, 0.2);
+  color: #0b0c10;
+}
+
+.banner-btn.accept:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.banner-btn.decline {
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--text-secondary);
+}
+
+.banner-btn.decline:hover {
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-primary);
+}
+
+/* LAN Devices Dashboard Panel */
+.lan-dashboard {
+  margin-top: 32px;
+  width: 100%;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent-terracotta);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.2s ease;
+}
+
+.link-btn:hover {
+  color: #f59e0b;
+}
+
+.peer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  margin-top: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.peer-grid::-webkit-scrollbar {
+  width: 4px;
+}
+
+.peer-grid::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.peer-grid::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+}
+
+.peer-grid::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent-terracotta);
+  outline-offset: 2px;
+}
+
+.peer-card {
+  background: rgba(255, 255, 255, 0.01);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.peer-card:hover {
+  border-color: var(--panel-border-glow);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.peer-card.offline {
+  opacity: 0.65;
+}
+
+.peer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.peer-status {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.peer-status.online {
+  background: var(--accent-sage);
+}
+
+.peer-status.offline {
+  background: var(--text-muted);
+}
+
+.peer-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.peer-address {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: monospace;
+}
+
+.peer-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.peer-action-btn {
+  flex: 1;
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.peer-action-btn.send {
+  background: rgba(210, 125, 86, 0.08);
+  border: 1px solid rgba(210, 125, 86, 0.15);
+  color: var(--accent-terracotta);
+}
+
+.peer-action-btn.send:hover {
+  background: rgba(210, 125, 86, 0.16);
+}
+
+.peer-action-btn.pair {
+  background: rgba(138, 154, 134, 0.08);
+  border: 1px solid rgba(138, 154, 134, 0.15);
+  color: var(--accent-sage);
+}
+
+.peer-action-btn.pair:hover {
+  background: rgba(138, 154, 134, 0.16);
+}
+
+.peer-action-btn.delete {
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--text-muted);
+}
+
+.peer-action-btn.delete:hover {
+  border-color: rgba(200, 83, 83, 0.3);
+  color: var(--accent-coral);
+}
+
+.lan-empty-state {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 32px;
+  text-align: center;
+  border: 1px dashed var(--panel-border);
+  border-radius: 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* Pairing Modal Dialog */
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  width: 100%;
+  max-width: 420px;
+  padding: 24px;
+  border-radius: 20px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.modal-header h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+}
+
+.close-btn:hover {
+  color: var(--text-primary);
+}
+
+.modal-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.step-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.step-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.center-align {
+  text-align: center;
+  font-size: 18px;
+  letter-spacing: 1px;
+}
+
+.pairing-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pairing-status.success {
+  color: var(--accent-sage);
+}
+
+.pairing-status.error {
+  color: var(--accent-coral);
+}
+

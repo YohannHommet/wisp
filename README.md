@@ -2,62 +2,73 @@
 
 Send a file between two computers on the same network. No account, browser, cloud storage, or server to configure.
 
-```text
-# Computer A
-wisp send report.pdf
+Wisp 0.2 is a terminal app for one file at a time. Install it on **both computers**, use the same Wi-Fi or Ethernet network, and keep both commands open until they finish. To send a folder or several files, create an archive first.
 
-  wisp recv 48291370-amber-river-lunar-moss
+## Install from this checkout
 
-# Computer B: paste the command printed by Computer A
-wisp recv 48291370-amber-river-lunar-moss
+With Rust 1.88 or newer and its platform build tools installed, open a terminal in the repository root and run on each computer:
 
-Saved and verified: /home/you/report.pdf (24576 bytes)
-```
-
-The example code is illustrative; use the fresh code printed by your sender. Both computers must keep Wisp running until the transfer finishes.
-
-Wisp uses QUIC/TLS encryption, channel-bound SPAKE2 authentication and BLAKE3 integrity checks. The sender reports **delivered and verified** only after receiving confirmation that the receiver verified and saved the file. See the [security model](docs/THREAT_MODEL.md) for the guarantees and limits; this implementation has not had an independent security audit.
-
-## Install
-
-From this checkout, with Rust 1.88 or newer:
-
-```bash
+```sh
 cargo install --locked --path crates/wisp-cli
+wisp --version
 ```
 
-Or build without installing:
+Expect `wisp 0.2.0`. If `wisp` is not found, reopen your terminal or use the [platform setup instructions](docs/USER_GUIDE.md#installation-and-path).
 
-```bash
-cargo build --locked --release --bin wisp
-./target/release/wisp --help
+Prefer a standalone binary? The [installer instructions](docs/USER_GUIDE.md#published-release-installers) require a published CLI release with checksums. Building this checkout does not publish one.
+
+## Your first transfer
+
+**1. On the sending computer**, choose a file:
+
+```sh
+wisp send "report.pdf"
 ```
 
-Published CLI releases provide Linux x64/ARM64 binaries, a universal macOS binary, and a Windows x64 executable alongside `SHA256SUMS`. Verify the downloaded binary against that file. The [Unix installer](scripts/install.sh) and [PowerShell installer](scripts/install.ps1) perform this verification before installation. They require a published release with checksums; building this checkout does not publish a release.
+Wisp prints a receive command containing a fresh code. Leave this terminal open.
 
-The Unix installer defaults to `~/.local/bin`; Windows defaults to `%LOCALAPPDATA%\Wisp\bin`. Neither changes your shell configuration or requests administrator privileges. Set `WISP_INSTALL_DIR` to change the destination and `WISP_VERSION=v0.2.0` to select a published tag. The binaries are not platform code-signed or notarized.
+**2. On the receiving computer**, paste that command and add a destination:
+
+```text
+wisp recv CODE --dir ./received
+```
+
+Replace `CODE` with the complete code printed by the sender. Wisp creates `received` if needed. Without `--dir`, it uses your configured download directory, or the terminal's current directory when no directory is configured.
+
+**3. Wait for confirmation** on both computers:
+
+```text
+Receiver: Saved and verified: ...
+Sender:   Delivered and verified: ...
+```
+
+These labels show which terminal to check; they are not commands. The receiver prints the actual saved path. Existing files are preserved: a repeated `report.pdf` becomes `report (1).pdf`.
+
+If discovery fails, [connect using the sender's address](#when-discovery-cannot-find-the-sender).
 
 ## Everyday use
 
-```bash
+Replace `CODE` below with the fresh code from the sender. Quote paths containing spaces.
+
+```sh
 wisp send photo.jpg
 wisp send report.pdf --name 'Quarterly Report.pdf'
-wisp recv <code> --dir ~/Downloads
-wisp recv <code> --max-size 500MiB
+wisp recv CODE --dir ~/Downloads
+wisp recv CODE --max-size 500MiB
 ```
 
-A code contains a public eight-digit session identifier plus **four secret words**. It is single-use and expires after five minutes of waiting. Authentication failure ends that session; run `send` again rather than reusing the code.
+A code contains a public eight-digit session identifier plus **four secret words**. It is single-use and, by default, expires after five minutes of waiting. Share it privately with the intended receiver. Authentication failure ends that session; run `send` again rather than reusing the code.
 
-Received files never overwrite an existing destination. A collision saves as `report (1).pdf`, then `report (2).pdf`. Incomplete or invalid transfers are removed on ordinary errors and handled cancellation. Wisp saves regular files only: archive a folder or multiple files first.
+Received files never overwrite an existing destination. A collision saves as `report (1).pdf`, then `report (2).pdf`. Incomplete or invalid transfers are removed on ordinary errors and handled cancellation. Wisp saves regular files only and does not resume interrupted transfers.
 
 ## When discovery cannot find the sender
 
 Both computers need a reachable IPv4 connection, usually the same Wi-Fi or Ethernet network. Guest networks, client isolation, VPN routing and firewalls can block discovery or transfers.
 
-The sender always prints its address. Use it to bypass mDNS while keeping code authentication:
+The sender always prints its address. Replace the example address below with that address and use the full current code to bypass automatic discovery:
 
 ```bash
-wisp recv <code> --address 192.168.1.42:51023
+wisp recv CODE --address 192.168.1.42:51023
 ```
 
 On a computer with multiple network interfaces, select the LAN address explicitly:
@@ -70,7 +81,7 @@ For a fixed firewall rule or a multicast-free network:
 
 ```bash
 wisp send report.pdf --bind 192.168.1.42 --port 51023 --no-discovery
-wisp recv <code> --address 192.168.1.42:51023
+wisp recv CODE --address 192.168.1.42:51023
 ```
 
 Allow the sender's UDP port and, for automatic discovery, mDNS on UDP 5353. Wisp never changes firewall rules. An explicit address does not bypass a firewall or network isolation.
@@ -82,12 +93,27 @@ Configuration is optional. Run `wisp --help` and see the [user guide](docs/USER_
 ```bash
 wisp --no-config send report.pdf
 wisp --json send report.pdf
-wisp --json recv <code> --dir ./received
+wisp --json recv CODE --dir ./received
 ```
 
 JSON mode emits one object per line, including the actual ready code and a final verified receipt. Treat this output as sensitive: the ready event contains the pairing secret. Human progress goes to stderr and is disabled when stderr is not a terminal. Runtime failures have structured JSON errors; argument parsing errors use the normal CLI diagnostic and exit code 2.
 
+## Security
+
+Transfers use QUIC/TLS encryption, channel-bound SPAKE2 authentication and BLAKE3 integrity checks. The sender reports success only after receiving confirmation of a verified save. Read the [security model](docs/THREAT_MODEL.md) for guarantees and limits; this implementation has not had an independent security audit.
+
 ## Development
+
+To build without installing:
+
+```sh
+cargo build --locked --release --bin wisp
+./target/release/wisp --help
+```
+
+On Windows PowerShell, use `.\target\release\wisp.exe --help` instead.
+
+Run the checks:
 
 ```bash
 cargo fmt --all --check

@@ -61,6 +61,35 @@ A code contains a public eight-digit session identifier plus **four secret words
 
 Received files never overwrite an existing destination. A collision saves as `report (1).pdf`, then `report (2).pdf`. Incomplete or invalid transfers are removed on ordinary errors and handled cancellation. Wisp saves regular files only and does not resume interrupted transfers.
 
+## CLI usage
+
+The command has two actions:
+
+```text
+wisp send FILE [OPTIONS]
+wisp recv CODE [OPTIONS]
+```
+
+Start with `wisp send FILE`. It prints the complete one-use code and a ready-to-paste `wisp recv ...` command. On the other computer, paste that command and optionally add `--dir DIRECTORY`.
+
+Use these options only when you need them:
+
+| Need | Option |
+|---|---|
+| Choose the destination directory | `recv --dir DIRECTORY` |
+| Bypass automatic discovery | `recv --address IPv4:PORT` |
+| Choose the sender's network interface | `send --bind IPv4` |
+| Avoid multicast discovery | `send --no-discovery` (also requires `recv --address`) |
+| Keep the code valid longer | `send --wait SECONDS` |
+| Reject files above a limit | `recv --max-size 500MiB` |
+| Send under another filename | `send --name NAME` |
+| Ignore a broken user config | `--no-config` |
+| Script the transfer | `--json` |
+
+Run `wisp --help`, `wisp send --help`, or `wisp recv --help` for the full option list. `receive` is an alias for `recv`. A code is single-use; after authentication, expiry, cancellation, or a failed transfer, start `send` again for a fresh code.
+
+For source checkouts, the Makefile provides shortcuts: `make help`, `make build`, `make install`, `make test`, `make check`, and `make discovery`. `make run ARGS="send ./photo.jpg"` runs the checkout without installing it.
+
 ## When discovery cannot find the sender
 
 Both computers need a reachable IPv4 connection, usually the same Wi-Fi or Ethernet network. Guest networks, client isolation, VPN routing and firewalls can block discovery or transfers.

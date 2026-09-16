@@ -28,7 +28,7 @@ jobs:
       - run: cargo build --locked --release --bin wisp
       - name: Validate shell scripts
         if: runner.os != 'Windows'
-        run: bash -n scripts/install.sh scripts/run.sh scripts/smoke.sh
+        run: bash -n scripts/install.sh scripts/smoke.sh
       - name: Test checksum-verified installation
         if: runner.os != 'Windows'
         run: python3 scripts/test_install.py

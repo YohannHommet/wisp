@@ -18,3 +18,18 @@ Verification completed (final source checked on 2026-09-17):
 Failed stdout handling was reproduced and fixed: human and JSON modes terminate with an actionable error instead of silently waiting. The final suite includes that regression. Implementation and local verification are complete; the reviewed changes are committed on the branch named above. The unrelated untracked `wisp-architecture.*` artifacts were left untouched.
 
 Unverified externally: execution on physical pairs of computers, Windows/macOS runtime and installer behavior, hosted GitHub Actions runs, platform signing/notarization, and an independent protocol security audit. CI and docs specify those checks; local Linux tests do not establish them.
+
+## End-to-end engineering loop — 2026-09-17
+
+Executed the optimized CLI as separate sender/receiver processes with real QUIC sockets and isolated source/destination directories. Automatic multicast discovery also passed separately on this host's LAN interface.
+
+Added a repeatable recovery scenario in `crates/wisp-cli/tests/cli.rs`: reject a 2 MiB Unicode-named file with a one-byte receive limit, then start two fresh sessions into the same destination. Both rejected processes exit 1 without a completion event or leftover file. Both successful sessions exit 0 with matching receipts and byte-exact contents. The pre-existing file remains unchanged; collision names are distinct and no temporary files remain after each attempt.
+
+Reproduce the complete optimized suite and discovery check:
+
+```sh
+cargo test --locked --release --workspace
+cargo test --locked --release -p wisp --test cli discovery_two_cli_processes -- --ignored --nocapture
+```
+
+Observed: 32 tests passed in the optimized suite, plus the separately invoked discovery test. Existing checks also exercised wrong secrets, expiry, changed source contents, malformed/truncated data, receipt loss/forgery, cancellation, write failure and failed stdout. Formatting, Clippy with warnings denied, and diff hygiene passed. No new runtime defect was found; the change adds recovery coverage. Next external validation remains a transfer between two physical computers, including Windows/macOS; same-host process simulation cannot establish that behavior.

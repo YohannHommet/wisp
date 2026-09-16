@@ -115,6 +115,72 @@ fn two_cli_processes_exchange_the_displayed_code_and_verified_receipts() {
 }
 
 #[test]
+fn rejected_transfer_then_repeated_delivery_preserves_existing_files() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let name = "rapport été.bin";
+    let file = source.path().join(name);
+    let payload: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&file, &payload).unwrap();
+    std::fs::write(destination.path().join(name), b"original").unwrap();
+
+    for attempt in 0..3 {
+        let mut sender = Process::start(&[
+            "send",
+            path(&file),
+            "--no-discovery",
+            "--bind",
+            "127.0.0.1",
+            "--wait",
+            "10",
+        ]);
+        let ready = sender.event("ready");
+        let mut receiver = Process::start(&[
+            "recv",
+            ready["code"].as_str().unwrap(),
+            "--address",
+            ready["address"].as_str().unwrap(),
+            "--dir",
+            path(destination.path()),
+            "--timeout",
+            "5",
+            "--max-size",
+            if attempt == 0 { "1" } else { "2MiB" },
+        ]);
+        let (received_status, received) = receiver.finish();
+        let (sent_status, sent) = sender.finish();
+        if attempt == 0 {
+            for (status, events) in [(received_status, &received), (sent_status, &sent)] {
+                assert_eq!(status.code(), Some(1), "{events:?}");
+                assert_eq!(events.last().unwrap()["event"], "error", "{events:?}");
+                assert!(!events.iter().any(|event| event["event"] == "completed"));
+            }
+        } else {
+            assert!(received_status.success(), "{received:?}");
+            assert!(sent_status.success(), "{sent:?}");
+            let received = &received.last().unwrap()["receipt"];
+            let sent = &sent.last().unwrap()["receipt"];
+            let saved = destination
+                .path()
+                .join(format!("rapport été ({attempt}).bin"));
+            assert_eq!(received["saved_to"], path(&saved));
+            assert_eq!(received["hash"], sent["hash"]);
+            assert_eq!(received["name"], sent["name"]);
+            assert_eq!(received["size"], payload.len());
+            assert_eq!(std::fs::read(saved).unwrap(), payload);
+        }
+        assert_eq!(
+            std::fs::read(destination.path().join(name)).unwrap(),
+            b"original"
+        );
+        assert_eq!(
+            std::fs::read_dir(destination.path()).unwrap().count(),
+            attempt + 1
+        );
+    }
+}
+
+#[test]
 #[ignore = "requires an IPv4 LAN interface and multicast; run explicitly with --ignored"]
 fn discovery_two_cli_processes() {
     transfer(true);

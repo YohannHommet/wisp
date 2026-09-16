@@ -1,15 +1,16 @@
 [workspace]
 resolver = "2"
-members = ["crates/wisp-core", "crates/wisp-cli", "crates/wisp-relay", "fuzz", "src-tauri"]
+members = ["crates/wisp-core", "crates/wisp-cli"]
+exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.88"
 license = "Apache-2.0"
 authors = ["Yohann Hommet"]
 repository = "https://github.com/YohannHommet/wisp"
-description = "Wisp — lightning-fast, end-to-end encrypted, verified peer-to-peer file transfer."
+description = "Encrypted file transfers between computers on the same network."
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "fs", "net", "sync", "time", "signal"] }
@@ -20,26 +21,22 @@ blake3 = "1"
 mdns-sd = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "2"
-anyhow = "1"
+anyhow = "1.0.103"
 clap = { version = "4", features = ["derive"] }
-indicatif = "0.17"
+indicatif = "0.18"
 local-ip-address = "0.6"
 rand = "0.9"
 hex = "0.4"
 spake2 = "0.4"
 subtle = "2"
-axum = "0.7"
-dashmap = "6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 dirs = "5"
 toml = "0.8"
+tempfile = "3"
 
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
-panic = "abort"

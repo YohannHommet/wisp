@@ -1,12 +1,6 @@
-//! QUIC transport setup: self-signed certificate generation on the sender, and
-//! certificate-fingerprint *pinning* on the receiver.
-//!
-//! The sender mints a fresh self-signed certificate per run. Its BLAKE3
-//! fingerprint is advertised out-of-band (mDNS in Phase 1) and pinned by the
-//! receiver's custom verifier — so a passive eavesdropper cannot read the
-//! stream, and the receiver only talks to the advertised endpoint.
-//!
-//! Phase 2 binds this channel to a PAKE secret to defeat *active* spoofers.
+//! Ephemeral QUIC/TLS connections; discovery fingerprints are pinned when available.
+//! Fingerprints alone are not identities. Every connection must complete the
+//! channel-bound PAKE before metadata or file bytes are exchanged.
 
 use std::sync::Arc;
 
@@ -24,7 +18,9 @@ use std::sync::OnceLock;
 
 fn provider() -> Arc<CryptoProvider> {
     static PROVIDER: OnceLock<Arc<CryptoProvider>> = OnceLock::new();
-    PROVIDER.get_or_init(|| Arc::new(rustls::crypto::ring::default_provider())).clone()
+    PROVIDER
+        .get_or_init(|| Arc::new(rustls::crypto::ring::default_provider()))
+        .clone()
 }
 
 /// A server config plus the fingerprint a receiver must pin.
@@ -56,6 +52,9 @@ pub fn make_server_config() -> Result<ServerSetup> {
 
     let mut transport = TransportConfig::default();
     transport.max_concurrent_uni_streams(0u8.into());
+    transport.max_concurrent_bidi_streams(1u8.into());
+    transport.keep_alive_interval(Some(std::time::Duration::from_secs(5)));
+    transport.max_idle_timeout(Some(std::time::Duration::from_secs(60).try_into()?));
     // Custom flow control windows for high throughput (8 MiB / 12 MiB / 8 MiB)
     transport.stream_receive_window(8_388_608u32.into());
     transport.receive_window(12_582_912u32.into());
@@ -68,59 +67,10 @@ pub fn make_server_config() -> Result<ServerSetup> {
     })
 }
 
-/// Build a QUIC server config with a persistent self-signed certificate loaded or created in ~/.config/wisp/
-pub fn make_persistent_server_config() -> Result<ServerSetup> {
-    let config_dir = dirs::config_dir()
-        .context("getting config dir")?
-        .join("wisp");
-    let cert_path = config_dir.join("peer_cert.der");
-    let key_path = config_dir.join("peer_key.der");
-
-    let (cert_der, key_der) = if cert_path.exists() && key_path.exists() {
-        let c = std::fs::read(&cert_path)?;
-        let k = std::fs::read(&key_path)?;
-        (CertificateDer::from(c), PrivatePkcs8KeyDer::from(k))
-    } else {
-        std::fs::create_dir_all(&config_dir)?;
-        let rcgen::CertifiedKey { cert, key_pair } =
-            rcgen::generate_simple_self_signed(vec!["wisp".to_string()])
-                .context("generating self-signed certificate")?;
-        let c_der = cert.der().to_vec();
-        let k_der = key_pair.serialize_der();
-        std::fs::write(&cert_path, &c_der)?;
-        std::fs::write(&key_path, &k_der)?;
-        (CertificateDer::from(c_der), PrivatePkcs8KeyDer::from(k_der))
-    };
-
-    let fingerprint = *blake3::hash(cert_der.as_ref()).as_bytes();
-    let key = PrivateKeyDer::Pkcs8(key_der);
-
-    let mut crypto = rustls::ServerConfig::builder_with_provider(provider())
-        .with_safe_default_protocol_versions()
-        .context("rustls protocol versions")?
-        .with_no_client_auth()
-        .with_single_cert(vec![cert_der], key)
-        .context("rustls single cert")?;
-    crypto.alpn_protocols = vec![PROTOCOL.as_bytes().to_vec()];
-
-    let quic = QuicServerConfig::try_from(crypto).context("quic server config")?;
-    let mut config = ServerConfig::with_crypto(Arc::new(quic));
-
-    let mut transport = TransportConfig::default();
-    transport.max_concurrent_uni_streams(0u8.into());
-    transport.stream_receive_window(8_388_608u32.into());
-    transport.receive_window(12_582_912u32.into());
-    transport.send_window(8_388_608u64);
-    config.transport_config(Arc::new(transport));
-
-    Ok(ServerSetup {
-        config,
-        fingerprint,
-    })
-}
-
-/// Build a QUIC client config that pins the sender's certificate fingerprint.
-pub fn make_client_config(expected_fingerprint: [u8; 32]) -> Result<ClientConfig> {
+/// Pin the discovery fingerprint when available. With an explicit address, TLS
+/// verifies certificate possession and PAKE authenticates the peer before metadata.
+/// An unpinned TLS connection alone is NOT authenticated; never bypass PAKE.
+pub fn make_client_config(expected_fingerprint: Option<[u8; 32]>) -> Result<ClientConfig> {
     let verifier = Arc::new(PinnedVerifier {
         fingerprint: expected_fingerprint,
         provider: provider(),
@@ -139,6 +89,9 @@ pub fn make_client_config(expected_fingerprint: [u8; 32]) -> Result<ClientConfig
 
     let mut transport = TransportConfig::default();
     transport.max_concurrent_uni_streams(0u8.into());
+    transport.max_concurrent_bidi_streams(1u8.into());
+    transport.keep_alive_interval(Some(std::time::Duration::from_secs(5)));
+    transport.max_idle_timeout(Some(std::time::Duration::from_secs(60).try_into()?));
     // Custom flow control windows for high throughput (8 MiB / 12 MiB / 8 MiB)
     transport.stream_receive_window(8_388_608u32.into());
     transport.receive_window(12_582_912u32.into());
@@ -152,7 +105,7 @@ pub fn make_client_config(expected_fingerprint: [u8; 32]) -> Result<ClientConfig
 /// fingerprint matches the value advertised by the sender.
 #[derive(Debug)]
 struct PinnedVerifier {
-    fingerprint: [u8; 32],
+    fingerprint: Option<[u8; 32]>,
     provider: Arc<CryptoProvider>,
 }
 
@@ -166,7 +119,10 @@ impl ServerCertVerifier for PinnedVerifier {
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         let got = blake3::hash(end_entity.as_ref());
-        if got.as_bytes() == &self.fingerprint {
+        if self
+            .fingerprint
+            .is_none_or(|expected| got.as_bytes() == &expected)
+        {
             Ok(ServerCertVerified::assertion())
         } else {
             Err(rustls::Error::General(

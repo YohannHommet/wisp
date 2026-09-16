@@ -1,105 +1,53 @@
-# Wisp — Threat Model
+# Wisp 0.2 security model
 
-This document is the security contract. It is versioned with the code and
-describes exactly what Wisp does and does **not** protect against *at the
-current phase*. We never claim a property we have not shipped.
+This document describes the implemented WSP/2 CLI protocol. It is not an independent audit or a claim of formal verification.
 
-## Design principles
+## Scope and assumptions
 
-1. **Compose proven primitives.** Wisp invents no cryptography. It uses QUIC
-   (TLS 1.3), BLAKE3, and SPAKE2 (RFC 9382). Rolling our own crypto is
-   forbidden.
-2. **Authenticate before persisting.** No unverified byte is ever written under
-   the final filename. Data lands in a `.part` file and is renamed atomically
-   only after integrity verification.
-3. **Least trust.** No accounts, no PKI, no server that can read user data. Any
-   relay we add must be *blind* (ciphertext + opaque routing only).
-4. **Honest defaults.** Insecure modes, if any, are opt-in and loudly labeled.
+Two users deliberately transfer one regular file over a reachable local IPv4 network. They share a fresh pairing code through a channel they trust. Both endpoints and the destination directory must be under their control. Anyone holding the complete code can act as a peer. File contents are not scanned for malware and are never automatically executed.
 
-## Assets
+A network adversary can observe, spoof, reorder, redirect or drop discovery and transfer traffic. Network availability and traffic-analysis resistance are not guaranteed. Persistent pairing, internet relays, IPv6 and NAT traversal are not supported in this release.
 
-- **Confidentiality** of file *content*.
-- **Confidentiality** of *metadata* (filename, size, who-sends-what-to-whom).
-- **Integrity & authenticity** of delivered bytes.
-- **Availability** of a transfer (resistance to griefing / DoS on the LAN).
+## Discovery is public; the password is not
 
-## Adversaries
+A code has an independent random eight-digit locator and four independently sampled words from a 120-word list, with replacement. The four words provide log2(120^4), approximately 27.6 bits, of secret entropy. The locator is public and contributes no authentication secrecy.
 
-- **Passive eavesdropper** on the local network or the path.
-- **Active on-path attacker** (can inject, drop, reorder, spoof mDNS).
-- **Malicious relay** (future WAN phase).
-- **Malicious peer** (someone who has, or guesses, the code).
+mDNS advertises only the locator, ephemeral TLS certificate fingerprint and protocol version. It advertises **no password hash or password-derived commitment**, filename, file size or content checksum. An attacker cannot enumerate a discovery hash to narrow the four secret words. Public locators can collide; a collision can cause discovery/authentication failure, not acceptance without the secret.
 
----
+Only one incoming connection attempt is accepted per sender session. The advertisement is withdrawn at that point. Failed connection setup, stream setup or authentication ends the session. The sender does not retry authentication with the same code. Waiting codes expire after 300 seconds by default, configurable from 1 to 3600 seconds. Each new invocation generates a new code. The CLI never accepts a user-chosen send password.
 
-## Phase 1 — LAN, verified, TLS-pinned ✅
+For a uniformly generated password, one online guess has probability 1/120^4 (about one in 207 million). This is conditional on correct implementation of the PAKE and the stated one-attempt policy; it is not a substitute for an audit. A malicious party can intentionally consume a session or spoof discovery to deny service.
 
-**Superseded by Phase 2.** Documented here for historical reference.
+## Transport and peer authentication
 
-Transport: QUIC/TLS 1.3 with self-signed cert fingerprint pinning. Discovery
-via mDNS advertising the code and file metadata in cleartext. Integrity via
-BLAKE3 verify-before-rename.
+Each sender creates a fresh self-signed TLS certificate in memory. No long-lived device keys are created. QUIC uses TLS 1.3 and ALPN `wsp/2`. The receiver pins the discovered certificate when using mDNS. A fingerprint learned from unauthenticated discovery is not by itself a trusted identity.
 
-Known limitation: an active LAN attacker could spoof the mDNS record (including
-the fingerprint) and MITM the connection. Phase 2 closes this.
+With `--address`, the receiver accepts a self-signed certificate but still checks TLS handshake signatures. In both modes, peers must complete SPAKE2 and mutual key confirmation before file metadata is sent. The confirmation MAC includes a 32-byte TLS exporter value and distinct sender/receiver labels, binding authentication to this TLS connection. Direct-address mode does not bypass authentication. No early-data transfer or insecure flag exists.
 
----
+The SPAKE2 implementation comes from the `spake2` crate. Wisp's BLAKE3-based key confirmation and TLS channel-binding composition are application protocol choices. They have regression tests, not a formal proof of this complete implementation. [RFC 9382](https://www.rfc-editor.org/rfc/rfc9382.html) describes the underlying SPAKE2 protocol; it is not an endorsement or audit of Wisp.
 
-## Phase 2 (current) — PAKE-authenticated channel
+## File integrity and filesystem behavior
 
-**Transport:** QUIC (TLS 1.3) on the LAN. The sender generates a self-signed
-certificate; its BLAKE3 fingerprint is advertised over mDNS and pinned by the
-receiver. The pairing code selects which transfer to fetch.
+The sender hashes an open regular-file handle before advertising. It rewinds and transmits that same handle, bounded by the prepared size, and hashes it again while sending. Replacing the path cannot switch the opened file; modifying the file can fail the transfer. This is not a filesystem snapshot facility: stop editing a source while sending it.
 
-**Authentication:** immediately after the QUIC connection is established, both
-sides run a **SPAKE2** (RFC 9382, balanced PAKE) handshake over the bidirectional
-stream. The pairing code is the shared PAKE password. Both sides derive a strong
-ephemeral key and exchange BLAKE3-keyed confirmation MACs. A peer that does not
-know the code cannot pass this step — it will observe no useful oracle.
+Only an authenticated peer can send metadata. JSON frames are limited to 4096 bytes and reject unknown fields. Incoming file size is bounded by a receiver-configurable cap, at most 1 TiB. An authenticated malicious sender can consume disk space up to that cap; select a smaller `--max-size` when appropriate. Exact size, end-of-stream and BLAKE3 checksum must agree before publication.
 
-**mDNS advertisement (Phase 2):** only `ch` = `hex(BLAKE3(code)[..16])` (a
-commitment, not the code itself) and the TLS fingerprint are advertised. A
-passive observer on the LAN cannot extract the code from a packet capture.
+Files are written to private randomly named `.wisp-*.part` files inside the chosen destination filesystem. On Unix, temporary files are created with mode 0600. Received permissions are not copied from the sender; files are not marked executable. Filename sanitization strips both Unix and Windows path components, control and bidirectional override characters, Windows reserved device names and trailing dots/spaces. UTF-8 filenames are bounded to leave room for collision suffixes.
 
-**Metadata:** filename, size, and BLAKE3 hash are **never sent over mDNS**. They
-travel inside the PAKE-authenticated, TLS-encrypted QUIC stream, invisible to
-a LAN observer.
+Temporary files are flushed and synced before publication. `tempfile::persist_noclobber` publishes without replacing an existing file or symlink; collisions are retried with a suffix. Unix destination directories are synced after publication. Filesystem semantics and hardware still determine crash durability; Windows directory durability is not separately forced. Wisp does not defend against a malicious local process that controls the destination directory or compromises the user's account.
 
-**Integrity:** verify-before-rename on BLAKE3 hash (same as Phase 1).
+Ordinary failures and handled SIGINT/SIGTERM drop the private temporary file. SIGKILL, power failure or a process crash can leave a partial file. Wisp does not sweep directories on startup: users may manually remove clearly abandoned `.wisp-*.part` files after checking that no transfer is active.
 
-| Property | Phase 3 status |
-| --- | --- |
-| Content confidentiality vs **passive** eavesdropper | ✅ TLS 1.3 over QUIC |
-| Content integrity / corruption detection | ✅ BLAKE3 verify-before-rename |
-| Content confidentiality vs **active mDNS spoofer** | ✅ PAKE fails without the code |
-| Metadata confidentiality (name, size) | ✅ inside encrypted channel only |
-| Mutual authentication of peers | ✅ SPAKE2 (RFC 9382) |
-| Forward secrecy | ✅ QUIC ephemeral key exchange |
-| Offline brute-force of pairing code | ✅ no usable oracle; PAKE is zero-knowledge |
-| Channel binding (TLS ↔ PAKE key) | ✅ Yes — bound via TLS exporter keying material |
-| WAN / NAT traversal | ✅ Phase 3 Rendezvous blind relay |
+## Delivery confirmation
 
-### Channel Binding (TLS ↔ PAKE Key)
-To prevent active connection relay or session redirection attacks, Wisp implements formal channel binding. Both endpoints call the TLS exporter interface (`export_keying_material` with label `b"wisp-channel-binding"`) to extract a 32-byte session token unique to the specific QUIC TLS session. This token is mixed into the SPAKE2 confirmation MAC calculations, ensuring that the PAKE protocol is cryptographically bound to the exact physical TLS tunnel.
+The receiver publishes only verified bytes, then sends a bounded receipt containing the saved name, size and checksum. The sender validates it before reporting delivery. Sending all bytes, closing a stream or timing out does not establish delivery.
 
----
+A peer holding the secret can lie about saving a file; the receipt authenticates that peer's assertion, not its storage hardware. If the receipt is lost, the sender reports delivery as unconfirmed. The receiver keeps its verified file and warns that sender confirmation is uncertain. Check the destination before retrying. Cancellation after a save can likewise leave a complete file, which Wisp does not delete.
 
-## Phase 3 — WAN, blind relay ✅
+## Metadata, retention and limits
 
-* **Blinded Topic Rendezvous:** Initial IP/port discovery operates case-insensitively over the WAN blind relay using a BLAKE3 commitment of the pairing code as the topic hash (`ch`).
-* **Blind WAN relaying:** The Axum rendezvous relay records public WAN IP information and passes it to the receiver. It is stateless and blind—it never processes or stores the plaintext pairing code or file data.
-* **Denial of Service protections:** The relay implements IP-based rate limiting (max 30 requests/minute per client IP) and atomic single-threaded capacity limit purges (`CleanupGuard`) to prevent resource exhaustion and contention.
+Observers still see endpoint addresses, timing, approximate traffic volume and the presence of Wisp. There is no anonymity or traffic padding. Filename, declared size, hash and file contents travel within the authenticated encrypted stream. Codes appear in terminal output and process arguments; shell history, process inspection and redirected JSON logs can expose them. Debug formatting of `PairingCode` redacts the secret.
 
-## Phase 4 (planned) — performance & assurance
+The application contains no analytics, account system, external font requests or cloud service calls. Optional installers fetch releases from GitHub; development tooling fetches packages and advisory data. Local configuration stores preferences only.
 
-- Multipath bonding, optional FEC for lossy links.
-- Wire-format fuzzing (`cargo-fuzz`), formal analysis of the handshake
-  (Tamarin/ProVerif), and an independent third-party audit **before** the word
-  "secure" appears unqualified in marketing.
-
-## Out of scope (always)
-
-- Endpoint compromise (malware on sender/receiver).
-- Coercion of a party who holds the code.
-- Traffic-analysis resistance against a global passive adversary (we reduce
-  metadata leakage; we do not claim anonymity).
+Report security concerns through the repository's private security-reporting facility if enabled. Do not publish a live code or confidential file in an issue. Independent protocol review and physical cross-platform network testing remain part of release assurance.

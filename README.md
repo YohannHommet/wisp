@@ -1,299 +1,109 @@
-<div align="center">
+# Wisp
 
-# ✦ Wisp
+Send a file between two computers on the same network. No account, browser, cloud storage, or server to configure.
 
-**Send files to anyone, encrypted, in one command.**  
-End-to-end encrypted · BLAKE3-verified · zero accounts, zero cloud.
+```text
+# Computer A
+wisp send report.pdf
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.82+-orange.svg)](https://www.rust-lang.org)
-[![Status](https://img.shields.io/badge/status-Phase%203%20(WAN%2BPAKE)-brightgreen.svg)](docs/THREAT_MODEL.md)
+  wisp recv 48291370-amber-river-lunar-moss
 
-</div>
+# Computer B: paste the command printed by Computer A
+wisp recv 48291370-amber-river-lunar-moss
 
-> A wisp of light that finds its way to you, then vanishes.
+Saved and verified: /home/you/report.pdf (24576 bytes)
+```
 
----
+The example code is illustrative; use the fresh code printed by your sender. Both computers must keep Wisp running until the transfer finishes.
+
+Wisp uses QUIC/TLS encryption, channel-bound SPAKE2 authentication and BLAKE3 integrity checks. The sender reports **delivered and verified** only after receiving confirmation that the receiver verified and saved the file. See the [security model](docs/THREAT_MODEL.md) for the guarantees and limits; this implementation has not had an independent security audit.
 
 ## Install
 
-Requires the [Rust toolchain](https://rustup.rs) (1.82+).
+From this checkout, with Rust 1.88 or newer:
 
 ```bash
-git clone https://github.com/YohannHommet/wisp.git
-cd wisp
-cargo build --release
+cargo install --locked --path crates/wisp-cli
 ```
 
-Binaries land at `target/release/wisp` and `target/release/wisp-relay`.  
-Add them to your `$PATH` or use the dev runner (`scripts/run.sh`) during development.
+Or build without installing:
 
----
-
-## Usage
-
-### LAN — same Wi-Fi or Ethernet network
-
-No relay needed. Works on any local network.
-
-**Sender:**
-```
-$ wisp send photo.jpg
-
-  ✦ wisp ready  (LAN)
-    file   photo.jpg (3.4 MB)
-    from   192.168.1.42:51023
-    blake3 a3f9c12e8b4d7…
-
-    on the other machine, run:
-      wisp recv 7-tiger-saturn
-
-  waiting for a receiver…
-```
-
-**Receiver** (same LAN, share the code however you like — chat, phone call):
-```
-$ wisp recv 7-tiger-saturn
-
-  ↘ receiving ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.4 MB/3.4 MB · 580 MB/s · ETA 0s
-  ✓ delivered photo.jpg (3.4 MB) — wisp gone.
-```
-
-File saves to the current directory. Done — no login, no upload, no account.
-
----
-
-### WAN — different networks (requires a relay)
-
-The relay brokers the initial connection; it **never sees file content or metadata**.
-
-**Step 1** — run the relay on any machine with a public IP (VPS, home server with open port):
 ```bash
-wisp-relay 7777          # listens on 0.0.0.0:7777
+cargo build --locked --release --bin wisp
+./target/release/wisp --help
 ```
 
-**Step 2** — sender passes the relay URL (or relies on configuration defaults):
-```
-$ wisp send --relay http://relay.example.com:7777 photo.jpg
+Published CLI releases provide Linux x64/ARM64 binaries, a universal macOS binary, and a Windows x64 executable alongside `SHA256SUMS`. Verify the downloaded binary against that file. The [Unix installer](scripts/install.sh) and [PowerShell installer](scripts/install.ps1) perform this verification before installation. They require a published release with checksums; building this checkout does not publish a release.
 
-  ✦ wisp ready  (WAN via relay)
-    file   photo.jpg (3.4 MB)
-    public [2001:db8::1]:51873
-    relay  http://relay.example.com:7777
+The Unix installer defaults to `~/.local/bin`; Windows defaults to `%LOCALAPPDATA%\Wisp\bin`. Neither changes your shell configuration or requests administrator privileges. Set `WISP_INSTALL_DIR` to change the destination and `WISP_VERSION=v0.2.0` to select a published tag. The binaries are not platform code-signed or notarized.
 
-    on the other machine, run:
-      wisp recv --relay http://relay.example.com:7777 7-tiger-saturn
+## Everyday use
 
-  waiting for a receiver…
-```
-
-**Step 3** — receiver uses the same relay URL and code:
 ```bash
-wisp recv --relay http://relay.example.com:7777 7-tiger-saturn
+wisp send photo.jpg
+wisp send report.pdf --name 'Quarterly Report.pdf'
+wisp recv <code> --dir ~/Downloads
+wisp recv <code> --max-size 500MiB
 ```
 
-> **NAT note:** WAN mode works when the sender has a reachable public address (IPv4, native IPv6, or home router with port forwarding). Two users both behind symmetric home NAT may fail — the relay handles discovery only, not data proxying. Full NAT traversal (such as ICE/STUN/TURN hole punching) is planned for Phase 4.
+A code contains a public eight-digit session identifier plus **four secret words**. It is single-use and expires after five minutes of waiting. Authentication failure ends that session; run `send` again rather than reusing the code.
 
----
+Received files never overwrite an existing destination. A collision saves as `report (1).pdf`, then `report (2).pdf`. Incomplete or invalid transfers are removed on ordinary errors and handled cancellation. Wisp saves regular files only: archive a folder or multiple files first.
 
-## Configuration
+## When discovery cannot find the sender
 
-Wisp supports an optional, user-level TOML configuration file to save default settings and customize network timeouts.
+Both computers need a reachable IPv4 connection, usually the same Wi-Fi or Ethernet network. Guest networks, client isolation, VPN routing and firewalls can block discovery or transfers.
 
-### File Location
-* **Linux / macOS:** `~/.config/wisp/config.toml`
-* **Windows:** `%APPDATA%\wisp\config.toml`
+The sender always prints its address. Use it to bypass mDNS while keeping code authentication:
 
-### Example `config.toml`
-```toml
-# Default WAN Rendezvous Relay URL (omitted by default for LAN-only)
-default_relay = "https://relay.example.com:7777"
-
-# Default destination directory for received files (supports ~ home expansion)
-default_download_dir = "~/Downloads"
-
-[timeouts]
-# SPAKE2 PAKE authentication timeout (seconds)
-pake = 15
-
-# Local network mDNS discovery timeout (seconds)
-discovery = 20
-
-# Stream read/write stalled timeout (seconds)
-block_transfer = 30
-```
-
-### Precedence Hierarchy
-When executing commands, parameters resolve in the following order:
-1. **Explicit CLI Flag:** (e.g. `--relay` or `--dir`)
-2. **Environment Variable:** (e.g. `WISP_RELAY`)
-3. **User Config File:** (`config.toml`)
-4. **Built-in Defaults:** (LAN-only mDNS fallback, current working directory, 15/20/30s timeouts)
-
----
-
-## CLI reference
-
-### `wisp send`
-
-```
-wisp send [OPTIONS] <FILE>
-
-Arguments:
-  <FILE>              File to send
-
-Options:
-  -n, --name <NAME>   Override the filename shown to the receiver
-  -r, --relay <RELAY> WAN relay URL (omit for LAN)
-  -v, --verbose       Debug logging
-  -h, --help
-```
-
-**Examples:**
 ```bash
-wisp send report.pdf
-wisp send report.pdf --name "Q3 Report.pdf"   # receiver sees a different name
-wisp send report.pdf --relay http://relay.example.com:7777
+wisp recv <code> --address 192.168.1.42:51023
 ```
 
----
+On a computer with multiple network interfaces, select the LAN address explicitly:
 
-### `wisp recv`
-
-```
-wisp recv [OPTIONS] <CODE>
-
-Arguments:
-  <CODE>              Code shown by the sender (e.g. 7-tiger-saturn)
-
-Options:
-  -d, --dir <DIR>     Directory to save into (falls back to config file or current directory)
-  -r, --relay <RELAY> WAN relay URL (must match sender)
-  -v, --verbose       Debug logging
-  -h, --help
-```
-
-**Examples:**
 ```bash
-wisp recv 7-tiger-saturn
-wisp recv 7-tiger-saturn --dir ~/Downloads
-wisp recv 7-tiger-saturn --relay http://relay.example.com:7777 --dir ~/Downloads
+wisp send report.pdf --bind 192.168.1.42
 ```
 
-If a file with the same name already exists, Wisp saves it safely as `file (1).ext`, `file (2).ext`, etc.
+For a fixed firewall rule or a multicast-free network:
 
----
-
-### `wisp-relay`
-
-```
-wisp-relay [port]     (default 7777)
+```bash
+wisp send report.pdf --bind 192.168.1.42 --port 51023 --no-discovery
+wisp recv <code> --address 192.168.1.42:51023
 ```
 
-Runs an Axum rendezvous server. Bind it to `0.0.0.0` so it's reachable from the internet.  
+Allow the sender's UDP port and, for automatic discovery, mDNS on UDP 5353. Wisp never changes firewall rules. An explicit address does not bypass a firewall or network isolation.
 
-**Key Features:**
-* **State-blind Rendezvous:** Stores only a 16-byte BLAKE3 commitment of the pairing code (not the code itself) and the sender's observed public IP:port.
-* **Native IPv6 Support:** Handles direct IPv6 clients and header-forwarded IPv6 addresses.
-* **IP-Based Rate Limiting:** Enforces a limit of 30 requests per minute per IP address on all endpoints (returning `HTTP 429 Too Many Requests` on violation) to prevent Denial of Service.
+## Configuration and automation
 
----
+Configuration is optional. Run `wisp --help` and see the [user guide](docs/USER_GUIDE.md) for paths, timeouts, exit codes and JSON events.
+
+```bash
+wisp --no-config send report.pdf
+wisp --json send report.pdf
+wisp --json recv <code> --dir ./received
+```
+
+JSON mode emits one object per line, including the actual ready code and a final verified receipt. Treat this output as sensitive: the ready event contains the pairing secret. Human progress goes to stderr and is disabled when stderr is not a terminal. Runtime failures have structured JSON errors; argument parsing errors use the normal CLI diagnostic and exit code 2.
 
 ## Development
 
-### Dev runner
-
 ```bash
-./scripts/run.sh send <file>          # auto-builds then sends
-./scripts/run.sh recv <code>          # auto-builds then receives
-./scripts/run.sh relay [port]         # start local relay
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+bash scripts/smoke.sh --discovery  # needs an IPv4 interface and multicast
 ```
 
-Rebuilds automatically if any `.rs` source file is newer than the binary.
+Tests use real QUIC sockets, hostile peers and actual CLI processes. Automatic discovery is an explicit integration test because multicast availability varies by environment. CI tests Linux, macOS and Windows, checks the minimum Rust version, and audits dependencies. Tagged builds create a **draft** CLI release only after checks pass.
 
-### Tests
+See [architecture](docs/ARCHITECTURE.md), [release checks](docs/RELEASING.md), and [changes](CHANGELOG.md).
 
-**Unit + integration tests:**
-```bash
-cargo test
-```
+## Upgrading from the prototype
 
-**Smoke tests** (end-to-end, real QUIC transfers):
-```bash
-bash scripts/smoke.sh             # 10 cases, ~8s
-bash scripts/smoke.sh --slow      # +wrong-code timeout test (~28s)
-bash scripts/smoke.sh --verbose   # show live wisp output per test
-bash scripts/smoke.sh --release   # test release build
-```
+Wisp 0.2 is CLI-only. The unfinished desktop interface, internet rendezvous relay and persistent-device pairing have been removed. Upgrade **both computers**: WSP/2, discovery records and codes are incompatible with 0.1.
 
-Smoke test cases: small file, 5 MiB binary, `--name` flag, filename collision,
-path-traversal sanitization, SIGINT handling, `.wisp-part` cleanup, WAN relay
-transfer, relay HTTP validation.
+Remove old `default_relay` and `trusted_peers` configuration fields, or use `--no-config`. Old user configuration and identity files are never automatically deleted. Wisp 0.2 does not load the old persistent keys.
 
----
-
-## How it works
-
-```
-Sender                    Relay (optional)             Receiver
-  │                           │                           │
-  │── /pub/{ch}/{fp}/{port} ─→│  (rendezvous only)        │
-  │                           │←── /sub/{ch} ─────────────│
-  │                           │─── {ip, port, fp} ────────→│
-  │←═══════════════════ QUIC + TLS 1.3 (direct) ══════════│
-  │         SPAKE2 handshake, then streaming transfer      │
-```
-
-- **QUIC / TLS 1.3** — encrypted transport, 1-RTT handshake, ephemeral self-signed cert per session.
-- **SPAKE2 + TLS Channel Binding** — password-authenticated key exchange bound to the TLS session via the TLS exporter (`tls_unique`), guaranteeing protection against active session hijacking and proxy MITM attacks.
-- **mDNS** — LAN discovery uses a BLAKE3 commitment of the code, not the code itself.
-- **BLAKE3** — streaming integrity check; file is saved under a `.wisp-part` name and atomically renamed only after the hash matches.
-- **Relay** — blind rendezvous: sees a 16-byte commitment and public IP:port, never file content. Protects its capacity using active IP rate limits.
-
----
-
-## Security
-
-See **[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)** for the full security model.
-
-Short version: the pairing code is the only shared secret. A wrong code fails the SPAKE2 handshake before any file data is exchanged. The relay cannot read or modify transfers (it sees only a hash commitment and IP:port). The TLS fingerprint is pinned by the receiver before connecting, and channel binding binds the session keys to the specific TLS tunnel.
-
----
-
-## Roadmap
-
-| Phase | Status | Theme |
-|---|---|---|
-| 1 | ✅ | LAN · QUIC · BLAKE3 verify-before-rename |
-| 2 | ✅ | SPAKE2 mutual auth · code commitment in mDNS |
-| 3 | ✅ | WAN blind relay · `wisp-relay` binary · IPv6 · Rate Limiting · TLS Channel Binding |
-| 4 | planned | NAT traversal · multipath · audit |
-
----
-
-## Architecture
-
-```
-crates/
-  wisp-core/      protocol library
-    code.rs         short pairing codes
-    config.rs       TOML configuration parser & precedence resolution
-    pake.rs         SPAKE2 mutual auth (RFC 9382)
-    discovery.rs    mDNS advertise / find
-    relay.rs        HTTP client for WAN rendezvous
-    transport.rs    QUIC + ephemeral TLS cert + fingerprint pinning
-    transfer.rs     wire protocol + PAKE handshake + verified streaming
-  wisp-cli/       `wisp` binary (clap)
-  wisp-relay/     `wisp-relay` blind rendezvous server (axum)
-
-scripts/
-  run.sh          dev runner (auto-build + send/recv/relay)
-  smoke.sh        end-to-end smoke test suite
-```
-
----
-
-## License
-
-Apache License 2.0 — see [LICENSE](LICENSE).  
-Built by [Yohann Hommet](https://github.com/YohannHommet).
+Apache-2.0. Built by [Yohann Hommet](https://github.com/YohannHommet).

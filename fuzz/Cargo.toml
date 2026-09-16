@@ -4,9 +4,11 @@ version = "0.0.0"
 publish = false
 edition = "2021"
 
+[package.metadata]
+cargo-fuzz = true
+
 [dependencies]
 libfuzzer-sys = "0.4"
-serde_json = { workspace = true }
 wisp-core = { path = "../crates/wisp-core" }
 
 [[bin]]
@@ -14,3 +16,6 @@ name = "fuzz_wire"
 path = "fuzz_targets/fuzz_wire.rs"
 test = false
 doc = false
+
+[workspace]
+members = ["."]

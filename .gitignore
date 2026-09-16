@@ -1,3 +1,9 @@
 /target
 *.wisp-part
 test-*.bin
+/ui/
+/src-tauri/
+/scratch/
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/corpus/

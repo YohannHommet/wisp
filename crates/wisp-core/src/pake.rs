@@ -1,26 +1,14 @@
-//! SPAKE2 mutual authentication (Phase 2, RFC 9382).
-//!
-//! The pairing code is the shared PAKE password. Both sides prove knowledge of
-//! the code before any file data is exchanged. An active mDNS spoofer that does
-//! not know the code fails here regardless of whether it can fake a TLS cert.
-//!
-//! Wire ordering over the same QUIC bi-stream used by the transfer, **before**
-//! the "GET" request:
-//!
-//!   B→A : [u8 len][msg bytes]       SPAKE2-B outbound message (~33 B)
-//!   A→B : [u8 len][msg bytes]       SPAKE2-A outbound message (~33 B)
-//!   A→B : [32 bytes]                confirm_a = blake3::keyed_hash(key[..32], "wisp:confirm:a")
-//!   B→A : [32 bytes]                confirm_b = blake3::keyed_hash(key[..32], "wisp:confirm:b")
-//!
-//! After both confirmations pass the application protocol continues unmodified.
+//! SPAKE2 key exchange with role-specific confirmation bound to the QUIC TLS session.
+//! Authentication completes before metadata or file bytes are exchanged. See the
+//! threat model for the distinction between this composition and the SPAKE2 RFC.
 
 use anyhow::{anyhow, Result};
 use quinn::{RecvStream, SendStream};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 use subtle::ConstantTimeEq;
 
-const ID_SENDER: &[u8] = b"wisp-sender";
-const ID_RECEIVER: &[u8] = b"wisp-receiver";
+const ID_SENDER: &[u8] = b"wisp-v2-sender";
+const ID_RECEIVER: &[u8] = b"wisp-v2-receiver";
 
 /// Sender (SPAKE2 role A). Call immediately after `accept_bi()`.
 pub async fn sender_handshake(
@@ -44,11 +32,16 @@ pub async fn sender_handshake(
         .map_err(|e| anyhow!("PAKE key derivation failed: {:?}", e))?;
 
     // Send our confirmation, then verify theirs.
-    send.write_all(&mac(&key, b"wisp:confirm:a", tls_unique)).await?;
+    send.write_all(&mac(&key, b"wisp:v2:confirm:a", tls_unique))
+        .await?;
 
     let mut got_b = [0u8; 32];
     recv.read_exact(&mut got_b).await?;
-    if got_b.ct_eq(&mac(&key, b"wisp:confirm:b", tls_unique)).unwrap_u8() == 0 {
+    if got_b
+        .ct_eq(&mac(&key, b"wisp:v2:confirm:b", tls_unique))
+        .unwrap_u8()
+        == 0
+    {
         return Err(anyhow!(
             "authentication failed — wrong code or active network attack"
         ));
@@ -81,13 +74,18 @@ pub async fn receiver_handshake(
     // Verify sender's confirmation, then send ours.
     let mut got_a = [0u8; 32];
     recv.read_exact(&mut got_a).await?;
-    if got_a.ct_eq(&mac(&key, b"wisp:confirm:a", tls_unique)).unwrap_u8() == 0 {
+    if got_a
+        .ct_eq(&mac(&key, b"wisp:v2:confirm:a", tls_unique))
+        .unwrap_u8()
+        == 0
+    {
         return Err(anyhow!(
             "authentication failed — wrong code or active network attack"
         ));
     }
 
-    send.write_all(&mac(&key, b"wisp:confirm:b", tls_unique)).await?;
+    send.write_all(&mac(&key, b"wisp:v2:confirm:b", tls_unique))
+        .await?;
 
     Ok(())
 }
@@ -129,16 +127,19 @@ mod tests {
     fn mac_is_deterministic_and_32_bytes() {
         let key = [0xabu8; 64];
         let dummy = [0u8; 32];
-        let out = mac(&key, b"wisp:confirm:a", &dummy);
+        let out = mac(&key, b"wisp:v2:confirm:a", &dummy);
         assert_eq!(out.len(), 32);
-        assert_eq!(out, mac(&key, b"wisp:confirm:a", &dummy));
+        assert_eq!(out, mac(&key, b"wisp:v2:confirm:a", &dummy));
     }
 
     #[test]
     fn mac_differs_by_label() {
         let key = [0x01u8; 64];
         let dummy = [0u8; 32];
-        assert_ne!(mac(&key, b"wisp:confirm:a", &dummy), mac(&key, b"wisp:confirm:b", &dummy));
+        assert_ne!(
+            mac(&key, b"wisp:v2:confirm:a", &dummy),
+            mac(&key, b"wisp:v2:confirm:b", &dummy)
+        );
     }
 
     #[test]
@@ -146,13 +147,16 @@ mod tests {
         let key_a = [0x01u8; 64];
         let key_b = [0x02u8; 64];
         let dummy = [0u8; 32];
-        assert_ne!(mac(&key_a, b"wisp:confirm:a", &dummy), mac(&key_b, b"wisp:confirm:a", &dummy));
+        assert_ne!(
+            mac(&key_a, b"wisp:v2:confirm:a", &dummy),
+            mac(&key_b, b"wisp:v2:confirm:a", &dummy)
+        );
     }
 
     #[test]
     fn ct_eq_correct_vs_wrong() {
         let key = [0xffu8; 64];
-        let label = b"wisp:confirm:a";
+        let label = b"wisp:v2:confirm:a";
         let dummy = [0u8; 32];
         let correct = mac(&key, label, &dummy);
         let mut wrong = correct;

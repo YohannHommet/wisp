@@ -1,84 +1,100 @@
-name: Release
-
+name: Release CLI
 on:
   push:
-    tags:
-      - 'v*'
-
+    tags: ['v*']
 permissions:
-  contents: write
-
+  contents: read
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
   build:
-    name: Build - ${{ matrix.platform.os-name }}
-    runs-on: ${{ matrix.platform.runs-on }}
+    needs: checks
+    timeout-minutes: 25
     strategy:
+      fail-fast: false
       matrix:
-        platform:
-          - os-name: Linux-x86_64
-            runs-on: ubuntu-latest
+        include:
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-musl
-            asset_name: wisp-linux-amd64
-          - os-name: Linux-arm64
-            runs-on: ubuntu-latest
+            asset: wisp-linux-amd64
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
-            asset_name: wisp-linux-arm64
-          - os-name: Windows-x86_64
-            runs-on: windows-latest
+            asset: wisp-linux-arm64
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
-            asset_name: wisp-windows-amd64.exe
-          - os-name: macOS-universal
-            runs-on: macos-latest
-            asset_name: wisp-macos-universal
-
+            asset: wisp-windows-amd64.exe
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset: wisp-macos-universal
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform.target }}
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cross compilation dependencies (Linux arm64)
-        if: matrix.platform.target == 'aarch64-unknown-linux-musl'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Build macOS Universal Binary
-        if: matrix.platform.os-name == 'macOS-universal'
-        run: |
-          rustup target add x86_64-apple-darwin aarch64-apple-darwin
-          cargo build --release --bin wisp --target x86_64-apple-darwin
-          cargo build --release --bin wisp --target aarch64-apple-darwin
-          lipo -create \
-            target/x86_64-apple-darwin/release/wisp \
-            target/aarch64-apple-darwin/release/wisp \
-            -output target/wisp-macos-universal
-
-      - name: Build target (Standard)
-        if: matrix.platform.os-name != 'macOS-universal'
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
-        run: |
-          cargo build --release --bin wisp --target ${{ matrix.platform.target }}
-
-      - name: Prepare asset (Linux / Windows)
-        if: matrix.platform.os-name != 'macOS-universal'
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install musl compiler
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Check tag matches package version
         shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if [ "${{ matrix.platform.runs-on }}" = "windows-latest" ]; then
-            cp target/${{ matrix.platform.target }}/release/wisp.exe target/${{ matrix.platform.asset_name }}
+          python3 - <<'PY'
+          import json, os, subprocess
+          metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1']))
+          version = next(p['version'] for p in metadata['packages'] if p['name'] == 'wisp')
+          assert os.environ['RELEASE_TAG'] == 'v' + version, 'tag and package version differ'
+          PY
+      - name: Test native release target
+        run: cargo test --locked --release --workspace --target ${{ matrix.target }}
+      - name: Build native release target
+        run: cargo build --locked --release --bin wisp --target ${{ matrix.target }}
+      - name: Assemble release asset
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          mkdir -p artifacts
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            rustup target add x86_64-apple-darwin
+            cargo build --locked --release --bin wisp --target x86_64-apple-darwin
+            lipo -create target/aarch64-apple-darwin/release/wisp target/x86_64-apple-darwin/release/wisp -output "artifacts/$ASSET"
+          elif [[ "$RUNNER_OS" == Windows ]]; then
+            cp "target/$TARGET/release/wisp.exe" "artifacts/$ASSET"
           else
-            cp target/${{ matrix.platform.target }}/release/wisp target/${{ matrix.platform.asset_name }}
+            cp "target/$TARGET/release/wisp" "artifacts/$ASSET"
           fi
-
-      - name: Upload binaries to Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          files: |
-            ${{ matrix.platform.os-name == 'macOS-universal' && 'target/wisp-macos-universal' || format('target/{0}', matrix.platform.asset_name) }}
+          name: ${{ matrix.asset }}
+          path: artifacts/*
+          if-no-files-found: error
+  draft:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create checksums and a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cd artifacts
+          sha256sum wisp-* > SHA256SUMS
+          cat > /tmp/wisp-release-notes.md <<'NOTES'
+          Wisp CLI: encrypted, verified file transfers on a local IPv4 network.
+
+          Upgrade both computers. WSP/2 and its pairing codes are incompatible with the 0.1 prototype. The desktop, relay and persistent-pairing experiments are retired.
+
+          Download your binary and SHA256SUMS, then verify the checksum before installing. These binaries are not notarized or platform code-signed.
+          NOTES
+          gh release create "$RELEASE_TAG" --draft --verify-tag --title "Wisp $RELEASE_TAG" --notes-file /tmp/wisp-release-notes.md wisp-* SHA256SUMS

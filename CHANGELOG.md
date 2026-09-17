@@ -23,6 +23,7 @@ Wisp returns to its original scope: a CLI for sending a regular file between two
 - Added direct-address fallback, interface/port selection, receive size limits, NDJSON events and useful error guidance.
 - Output failures terminate cleanly; valid non-UTF-8 destination paths no longer crash JSON completion.
 - Large transfers use enlarged UDP socket buffers to avoid kernel packet drops and QUIC stream-gap aborts on busy LAN paths.
+- Updated Quinn to 0.11.12, including upstream stream defragmentation fixes for reordered packets.
 - Updated locked dependencies to resolve the QUIC memory-exhaustion advisory and all reported dependency warnings.
 
 ### Maintenance

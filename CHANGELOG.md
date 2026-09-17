@@ -15,6 +15,8 @@ Wisp returns to its original scope: a CLI for sending a regular file between two
 
 - Discovery no longer publishes a hash of any secret code words.
 - Codes expire and permit one incoming attempt; authentication and I/O stages are bounded.
+- QUIC Retry validates a receiver's source address before the sender commits its one allowed attempt.
+- Receiver stream creation is deadline-bound, and human diagnostics escape peer-controlled terminal sequences.
 - Sender success requires a matching verified-save receipt.
 - Source hashing and transmission use the same open file; mutation during transmission is rejected.
 - Receiving uses private randomized temporary files, exact byte count/EOF/hash verification, syncing, and no-overwrite publication with collision suffixes.
@@ -24,11 +26,13 @@ Wisp returns to its original scope: a CLI for sending a regular file between two
 - Output failures terminate cleanly; valid non-UTF-8 destination paths no longer crash JSON completion.
 - Large transfers use enlarged UDP socket buffers to avoid kernel packet drops and QUIC stream-gap aborts on busy LAN paths.
 - Updated Quinn to 0.11.12, including upstream stream defragmentation fixes for reordered packets.
+- Updated rustls to 0.23.45 to resolve RUSTSEC-2026-0285.
 - Updated locked dependencies to resolve the QUIC memory-exhaustion advisory and all reported dependency warnings.
 
 ### Maintenance
 
 - Added real CLI-process, public-API and hostile-peer regression tests, with explicit multicast testing.
 - Added cross-platform CI, minimum-Rust validation, dependency auditing and a gated CLI-only draft release workflow.
+- Pinned CI actions and audit tooling to reviewed immutable versions and disabled persisted checkout credentials.
 - Installers verify SHA-256 checksums before replacing user-level binaries.
 - Rewrote usage, architecture, threat-model and release documentation around implemented behavior.

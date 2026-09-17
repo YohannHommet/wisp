@@ -14,7 +14,7 @@ A code has an independent random eight-digit locator and four independently samp
 
 mDNS advertises only the locator, ephemeral TLS certificate fingerprint and protocol version. It advertises **no password hash or password-derived commitment**, filename, file size or content checksum. An attacker cannot enumerate a discovery hash to narrow the four secret words. Public locators can collide; a collision can cause discovery/authentication failure, not acceptance without the secret.
 
-Only one incoming connection attempt is accepted per sender session. The advertisement is withdrawn at that point. Failed connection setup, stream setup or authentication ends the session. The sender does not retry authentication with the same code. Waiting codes expire after 300 seconds by default, configurable from 1 to 3600 seconds. Each new invocation generates a new code. The CLI never accepts a user-chosen send password.
+The sender uses QUIC Retry to validate the receiver's source address before committing the session, which limits spoofed-source amplification and state exhaustion. Only one address-validated incoming connection attempt is accepted per sender session. The advertisement is withdrawn at that point. Failed connection setup, stream setup or authentication ends the session. The sender does not retry authentication with the same code. Waiting codes expire after 300 seconds by default, configurable from 1 to 3600 seconds. Each new invocation generates a new code. The CLI never accepts a user-chosen send password.
 
 For a uniformly generated password, one online guess has probability 1/120^4 (about one in 207 million). This is conditional on correct implementation of the PAKE and the stated one-attempt policy; it is not a substitute for an audit. A malicious party can intentionally consume a session or spoof discovery to deny service.
 
@@ -22,7 +22,7 @@ For a uniformly generated password, one online guess has probability 1/120^4 (ab
 
 Each sender creates a fresh self-signed TLS certificate in memory. No long-lived device keys are created. QUIC uses TLS 1.3 and ALPN `wsp/2`. The receiver pins the discovered certificate when using mDNS. A fingerprint learned from unauthenticated discovery is not by itself a trusted identity.
 
-With `--address`, the receiver accepts a self-signed certificate but still checks TLS handshake signatures. In both modes, peers must complete SPAKE2 and mutual key confirmation before file metadata is sent. The confirmation MAC includes a 32-byte TLS exporter value and distinct sender/receiver labels, binding authentication to this TLS connection. Direct-address mode does not bypass authentication. No early-data transfer or insecure flag exists.
+With `--address`, the receiver accepts a self-signed certificate but still checks TLS handshake signatures. In both modes, peers must complete SPAKE2 and mutual key confirmation before file metadata is sent. The confirmation MAC includes a 32-byte TLS exporter value and distinct sender/receiver labels, binding authentication to this TLS connection. Direct-address mode does not bypass authentication. TLS connection, authentication-stream creation, PAKE and individual transfer operations have deadlines. No early-data transfer or insecure flag exists.
 
 The SPAKE2 implementation comes from the `spake2` crate. Wisp's BLAKE3-based key confirmation and TLS channel-binding composition are application protocol choices. They have regression tests, not a formal proof of this complete implementation. [RFC 9382](https://www.rfc-editor.org/rfc/rfc9382.html) describes the underlying SPAKE2 protocol; it is not an endorsement or audit of Wisp.
 
@@ -46,7 +46,7 @@ A peer holding the secret can lie about saving a file; the receipt authenticates
 
 ## Metadata, retention and limits
 
-Observers still see endpoint addresses, timing, approximate traffic volume and the presence of Wisp. There is no anonymity or traffic padding. Filename, declared size, hash and file contents travel within the authenticated encrypted stream. Codes appear in terminal output and process arguments; shell history, process inspection and redirected JSON logs can expose them. Debug formatting of `PairingCode` redacts the secret.
+Observers still see endpoint addresses, timing, approximate traffic volume and the presence of Wisp. There is no anonymity or traffic padding. Filename, declared size, hash and file contents travel within the authenticated encrypted stream. Codes appear in terminal output and process arguments; shell history, process inspection and redirected JSON logs can expose them. Debug formatting of `PairingCode` redacts the secret. Human-readable diagnostics escape terminal controls and bidirectional overrides received from peers; JSON output relies on JSON string escaping.
 
 The application contains no analytics, account system, external font requests or cloud service calls. Optional installers fetch releases from GitHub; development tooling fetches packages and advisory data. Local configuration stores preferences only.
 

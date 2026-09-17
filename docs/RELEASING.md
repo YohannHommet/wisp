@@ -14,7 +14,7 @@ cargo audit --deny warnings
 python3 scripts/test_install.py
 ```
 
-CI runs portable tests on Linux, Apple Silicon macOS, Intel macOS and Windows x64, plus a Rust 1.88 check and advisory audit. It validates installer syntax. Host tests use loopback sockets; multicast discovery is a separately selected integration test:
+CI runs portable tests on Linux, Apple Silicon macOS, Intel macOS and Windows x64, plus a Rust 1.88 check and advisory audit. External actions and the audit tool are pinned to reviewed versions. CI validates installer syntax; Unix installer behavior also has local fixture tests. Host tests use loopback sockets; multicast discovery is a separately selected integration test:
 
 ```bash
 bash scripts/smoke.sh --discovery

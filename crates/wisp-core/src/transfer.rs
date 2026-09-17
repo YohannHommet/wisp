@@ -238,13 +238,20 @@ pub async fn send_file(options: SendOptions, events: EventHandler) -> Result<Tra
         size: source.meta.size,
     });
 
-    let incoming = tokio::time::timeout(
-        Duration::from_secs(options.timeouts.wait),
-        endpoint.accept(),
-    )
+    let incoming = tokio::time::timeout(Duration::from_secs(options.timeouts.wait), async {
+        loop {
+            let incoming = endpoint.accept().await.context("sender endpoint closed")?;
+            if !incoming.remote_address_validated() {
+                incoming
+                    .retry()
+                    .context("validating the receiver's network address")?;
+                continue;
+            }
+            return Ok::<_, anyhow::Error>(incoming);
+        }
+    })
     .await
-    .context("code expired while waiting for a receiver; run send again for a fresh code")?
-    .context("sender endpoint closed")?;
+    .context("code expired while waiting for a receiver; run send again for a fresh code")??;
     // One attempt per code, including failed authentication; no guess-retry oracle.
     drop(advert);
     let conn = tokio::time::timeout(Duration::from_secs(options.timeouts.pake), incoming)
@@ -321,7 +328,10 @@ pub async fn receive_file(
     .context("cannot reach sender; check Wi-Fi, firewall and the sender's --bind address")?
     .context("connecting to sender; both computers need Wisp 0.2 or newer")?;
     let result = async {
-        let (mut send, mut recv) = conn.open_bi().await?;
+        let (mut send, mut recv) =
+            tokio::time::timeout(Duration::from_secs(options.timeouts.pake), conn.open_bi())
+                .await
+                .context("sender did not allow authentication before the timeout")??;
         let binding = channel_binding(&conn)?;
         receiver_protocol(&options, &mut send, &mut recv, &binding, &events).await
     }

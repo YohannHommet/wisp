@@ -97,6 +97,20 @@ fn parse_size(value: &str) -> std::result::Result<u64, String> {
         .ok_or_else(|| "size cannot exceed 1 TiB".into())
 }
 
+fn terminal_text(value: &str) -> String {
+    let mut safe = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_control()
+            || matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        {
+            safe.extend(character.escape_default());
+        } else {
+            safe.push(character);
+        }
+    }
+    safe
+}
+
 struct Output {
     json: bool,
     quiet: bool,
@@ -144,6 +158,7 @@ impl Output {
         }
     }
     fn status(&self, message: &str) {
+        let message = terminal_text(message);
         let result = self
             .progress
             .suspend(|| writeln!(std::io::stderr().lock(), "{message}"));
@@ -242,7 +257,11 @@ impl Output {
             let diagnostic = self.output_error().unwrap_or_else(|| message.to_owned());
             // This is the last diagnostic channel. If it too is closed, retain
             // the failure exit code rather than panicking during error reporting.
-            let _ = writeln!(std::io::stderr().lock(), "Error: {diagnostic}");
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "Error: {}",
+                terminal_text(&diagnostic)
+            );
         }
     }
 }
@@ -378,6 +397,14 @@ mod tests {
         assert_eq!(parse_size("0").unwrap(), 0);
         assert!(parse_size("2TiB").is_err());
         assert!(parse_size("18446744073709551615TiB").is_err());
+    }
+    #[test]
+    fn terminal_output_escapes_controls_and_bidi_overrides() {
+        assert_eq!(
+            terminal_text("peer\u{1b}[2J\n\u{202e}txt"),
+            "peer\\u{1b}[2J\\n\\u{202e}txt"
+        );
+        assert_eq!(terminal_text("éclair"), "éclair");
     }
     use clap::CommandFactory;
 }

@@ -323,3 +323,29 @@ async fn lost_receipt_preserves_verified_local_file_and_emits_warning() {
     cc.close(0u32.into(), b"done");
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn sender_cannot_block_receiver_before_authentication() {
+    let mut setup = transport::make_server_config().unwrap();
+    let mut config = quinn::TransportConfig::default();
+    config.max_concurrent_bidi_streams(0u8.into());
+    setup.config.transport_config(Arc::new(config));
+    let server = Endpoint::server(setup.config, "127.0.0.1:0".parse().unwrap()).unwrap();
+    let address = server.local_addr().unwrap();
+    let peer = tokio::spawn(async move {
+        let connection = server.accept().await.unwrap().await.unwrap();
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        connection.close(0u32.into(), b"test complete");
+    });
+    let destination = tempfile::tempdir().unwrap();
+    let mut options = ReceiveOptions::new(PairingCode::generate(), destination.path().into());
+    options.address = Some(address);
+    options.timeouts.pake = 1;
+    let error = tokio::time::timeout(Duration::from_secs(2), receive_file(options, silent()))
+        .await
+        .expect("receiver ignored its authentication timeout")
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("did not allow authentication"));
+    peer.abort();
+    let _ = peer.await;
+}

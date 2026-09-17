@@ -55,10 +55,6 @@ pub fn make_server_config() -> Result<ServerSetup> {
     transport.max_concurrent_bidi_streams(1u8.into());
     transport.keep_alive_interval(Some(std::time::Duration::from_secs(5)));
     transport.max_idle_timeout(Some(std::time::Duration::from_secs(60).try_into()?));
-    // Custom flow control windows for high throughput (8 MiB / 12 MiB / 8 MiB)
-    transport.stream_receive_window(8_388_608u32.into());
-    transport.receive_window(12_582_912u32.into());
-    transport.send_window(8_388_608u64);
     config.transport_config(Arc::new(transport));
 
     Ok(ServerSetup {
@@ -92,10 +88,6 @@ pub fn make_client_config(expected_fingerprint: Option<[u8; 32]>) -> Result<Clie
     transport.max_concurrent_bidi_streams(1u8.into());
     transport.keep_alive_interval(Some(std::time::Duration::from_secs(5)));
     transport.max_idle_timeout(Some(std::time::Duration::from_secs(60).try_into()?));
-    // Custom flow control windows for high throughput (8 MiB / 12 MiB / 8 MiB)
-    transport.stream_receive_window(8_388_608u32.into());
-    transport.receive_window(12_582_912u32.into());
-    transport.send_window(8_388_608u64);
     config.transport_config(Arc::new(transport));
 
     Ok(config)

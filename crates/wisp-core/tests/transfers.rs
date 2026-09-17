@@ -38,7 +38,7 @@ async fn start(
     options.bind = Some(Ipv4Addr::LOCALHOST);
     options.discovery = false;
     options.timeouts.pake = 2;
-    options.timeouts.block_transfer = 2;
+    options.timeouts.block_transfer = 10;
     options.timeouts.wait = 5;
     let task = tokio::spawn(send_file(options, handler));
     let (code, address) = tokio::time::timeout(Duration::from_secs(10), rx)
@@ -51,7 +51,7 @@ fn receiver(code: PairingCode, address: SocketAddr, dir: &Path) -> ReceiveOption
     let mut opts = ReceiveOptions::new(code, dir.to_owned());
     opts.address = Some(address);
     opts.timeouts.pake = 2;
-    opts.timeouts.block_transfer = 2;
+    opts.timeouts.block_transfer = 10;
     opts
 }
 
@@ -61,6 +61,7 @@ async fn complete_sessions_empty_small_and_multimegabyte() {
         vec![],
         b"hello wisp".to_vec(),
         (0u32..524_288).flat_map(u32::to_le_bytes).collect(),
+        vec![0u8; 64 * 1024 * 1024],
     ] {
         let source = tempfile::tempdir().unwrap();
         let destination = tempfile::tempdir().unwrap();

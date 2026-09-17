@@ -7,8 +7,9 @@ use crate::{
     transport, PairingCode,
 };
 use anyhow::{bail, Context, Result};
-use quinn::{Endpoint, RecvStream, SendStream};
+use quinn::{Endpoint, RecvStream, SendStream, TokioRuntime};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
@@ -213,8 +214,9 @@ pub async fn send_file(options: SendOptions, events: EventHandler) -> Result<Tra
         },
     };
     let setup = transport::make_server_config()?;
-    let endpoint = Endpoint::server(setup.config, SocketAddr::new(ip.into(), options.port))
-        .context("cannot listen on that address/port; check --bind and --port")?;
+    let endpoint =
+        endpoint_with_socket(Some(setup.config), SocketAddr::new(ip.into(), options.port))
+            .context("cannot listen on that address/port; check --bind and --port")?;
     let address = endpoint.local_addr()?;
     let code = PairingCode::generate();
     let advert = if options.discovery {
@@ -308,7 +310,8 @@ pub async fn receive_file(
         }
     };
     events(Event::Connecting { address });
-    let mut endpoint = Endpoint::client(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0))?;
+    let mut endpoint =
+        endpoint_with_socket(None, SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0))?;
     endpoint.set_default_client_config(transport::make_client_config(fingerprint)?);
     let conn = tokio::time::timeout(
         Duration::from_secs(options.timeouts.pake),
@@ -326,6 +329,28 @@ pub async fn receive_file(
     conn.close(0u32.into(), b"session finished");
     endpoint.wait_idle().await;
     result
+}
+
+fn endpoint_with_socket(
+    server_config: Option<quinn::ServerConfig>,
+    address: SocketAddr,
+) -> std::io::Result<Endpoint> {
+    let socket = Socket::new(
+        Domain::for_address(address),
+        Type::DGRAM,
+        Some(Protocol::UDP),
+    )?;
+    // Large UDP buffers prevent kernel drops from turning normal reordering into
+    // Quinn's bounded-gap transport error on high-throughput LAN transfers.
+    socket.set_recv_buffer_size(16 * 1024 * 1024)?;
+    socket.set_send_buffer_size(16 * 1024 * 1024)?;
+    socket.bind(&address.into())?;
+    Endpoint::new(
+        Default::default(),
+        server_config,
+        socket.into(),
+        Arc::new(TokioRuntime),
+    )
 }
 
 fn channel_binding(conn: &quinn::Connection) -> Result<[u8; 32]> {

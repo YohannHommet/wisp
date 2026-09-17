@@ -1897,6 +1897,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "socket2 0.5.10",
  "spake2",
  "subtle",
  "tempfile",

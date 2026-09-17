@@ -22,6 +22,7 @@ Wisp returns to its original scope: a CLI for sending a regular file between two
 - Handled cancellation drops transfer resources and partial files; no startup sweep deletes arbitrary partial files.
 - Added direct-address fallback, interface/port selection, receive size limits, NDJSON events and useful error guidance.
 - Output failures terminate cleanly; valid non-UTF-8 destination paths no longer crash JSON completion.
+- Large transfers use enlarged UDP socket buffers to avoid kernel packet drops and QUIC stream-gap aborts on busy LAN paths.
 - Updated locked dependencies to resolve the QUIC memory-exhaustion advisory and all reported dependency warnings.
 
 ### Maintenance

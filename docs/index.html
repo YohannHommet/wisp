@@ -3,102 +3,101 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Wisp — Zero-Cloud, Cryptographically Verified LAN File Transfers</title>
-  <meta name="description" content="Direct, peer-to-peer file transfer on local networks over QUIC TLS 1.3 with SPAKE2 password authentication and BLAKE3 integrity receipts. Built with 100% safe Rust.">
-  <meta name="theme-color" content="#07090e">
+  <title>Wisp — Local-First, Cryptographically Verified LAN File Transfers</title>
+  <meta name="description" content="Send files across the room, not across the cloud. Direct peer-to-peer file transfer on local networks over QUIC TLS 1.3 with SPAKE2 password authentication and streaming BLAKE3 receipts. 100% Safe Rust.">
+  <meta name="theme-color" content="#090b0e">
 
   <!-- Open Graph / Social Media -->
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Wisp — Zero-Cloud, Verified LAN File Transfers">
-  <meta property="og:description" content="Send files between computers on the same network at wire speed. No servers, no accounts, no cloud relays. Single-use SPAKE2 authentication over QUIC TLS 1.3 with BLAKE3 cryptographic receipts.">
+  <meta property="og:title" content="Wisp — Send files across the room, not across the cloud">
+  <meta property="og:description" content="Direct P2P file transfers over Wi-Fi and Ethernet. Zero servers, zero accounts, zero cloud relays. Authenticated with SPAKE2, encrypted with QUIC TLS 1.3, verified with BLAKE3.">
   <meta property="og:url" content="https://yohannhommet.github.io/wisp/">
 
-  <!-- Fonts -->
+  <!-- Technical Typography: Space Grotesk + Inter + JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 
   <style>
     /* ==========================================================================
-       CSS Variables & Design Tokens (Stripe / Linear / Vercel Aesthetic)
+       Design System: Cyber-Physical Network & Technical Instrumentation
+       Pure Local-First Aesthetic — No Vercel/SaaS AI-Slop Trope
        ========================================================================== */
     :root {
-      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-display: 'Space Grotesk', -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', ui-monospace, Menlo, Monaco, Consolas, monospace;
 
-      /* Dark Theme (Default) */
-      --bg-base: #07090e;
-      --bg-surface: #0e131f;
-      --bg-surface-elevated: #141b2d;
-      --bg-card: rgba(16, 23, 39, 0.7);
-      --bg-card-hover: rgba(24, 34, 58, 0.85);
-      --bg-code: #0b0f19;
+      /* Dark Telemetry Theme (Default) */
+      --bg-canvas: #090b0e;
+      --bg-panel: #10141d;
+      --bg-panel-elevated: #161c28;
+      --bg-panel-hover: #1c2434;
+      --bg-terminal: #0b0e14;
+      --bg-input: #080a0d;
 
-      --border-subtle: rgba(255, 255, 255, 0.08);
-      --border-medium: rgba(255, 255, 255, 0.14);
-      --border-accent: rgba(6, 182, 212, 0.4);
+      --border-subtle: #192132;
+      --border-medium: #232d42;
+      --border-strong: #364461;
 
-      --text-primary: #f8fafc;
+      --text-primary: #f1f5f9;
       --text-secondary: #94a3b8;
       --text-muted: #64748b;
-      --text-inverse: #07090e;
+      --text-inverse: #090b0e;
 
-      --cyan-400: #22d3ee;
-      --cyan-500: #06b6d4;
-      --cyan-glow: rgba(6, 182, 212, 0.25);
+      /* Functional Instrumentation Accents */
+      --signal-copper: #f97316;
+      --signal-copper-dim: rgba(249, 115, 22, 0.12);
+      --signal-amber: #f59e0b;
+      --wire-blue: #38bdf8;
+      --wire-blue-dim: rgba(56, 189, 248, 0.1);
+      --crypto-green: #10b981;
+      --crypto-green-dim: rgba(16, 185, 129, 0.12);
+      --danger-red: #f43f5e;
+      --danger-red-dim: rgba(244, 63, 94, 0.12);
 
-      --violet-400: #a78bfa;
-      --violet-500: #8b5cf6;
-      --violet-glow: rgba(139, 92, 246, 0.25);
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
 
-      --emerald-400: #34d399;
-      --emerald-500: #10b981;
-      --emerald-glow: rgba(16, 185, 129, 0.25);
+      --shadow-flat: 0 1px 3px rgba(0, 0, 0, 0.5);
+      --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.6);
 
-      --amber-400: #fbbf24;
-
-      --radius-sm: 6px;
-      --radius-md: 10px;
-      --radius-lg: 16px;
-      --radius-xl: 24px;
-      --radius-full: 9999px;
-
-      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-      --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
-      --shadow-glow: 0 0 40px rgba(6, 182, 212, 0.15);
-
-      --container-max: 1200px;
-      --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-      --transition-smooth: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+      --container-max: 1160px;
+      --transition: 150ms cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     [data-theme="light"] {
-      --bg-base: #f8fafc;
-      --bg-surface: #ffffff;
-      --bg-surface-elevated: #f1f5f9;
-      --bg-card: rgba(255, 255, 255, 0.85);
-      --bg-card-hover: #ffffff;
-      --bg-code: #0f172a;
+      --bg-canvas: #f8fafc;
+      --bg-panel: #ffffff;
+      --bg-panel-elevated: #f1f5f9;
+      --bg-panel-hover: #e2e8f0;
+      --bg-terminal: #0f172a;
+      --bg-input: #f8fafc;
 
-      --border-subtle: rgba(0, 0, 0, 0.08);
-      --border-medium: rgba(0, 0, 0, 0.15);
-      --border-accent: rgba(6, 182, 212, 0.6);
+      --border-subtle: #e2e8f0;
+      --border-medium: #cbd5e1;
+      --border-strong: #94a3b8;
 
       --text-primary: #0f172a;
       --text-secondary: #475569;
       --text-muted: #64748b;
-      --text-inverse: #f8fafc;
+      --text-inverse: #ffffff;
 
-      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
-      --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.08);
-      --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
-      --shadow-glow: 0 0 40px rgba(6, 182, 212, 0.1);
+      --signal-copper: #ea580c;
+      --signal-copper-dim: rgba(234, 88, 12, 0.08);
+      --wire-blue: #0284c7;
+      --wire-blue-dim: rgba(2, 132, 199, 0.08);
+      --crypto-green: #059669;
+      --crypto-green-dim: rgba(5, 150, 105, 0.08);
+      --danger-red: #e11d48;
+      --danger-red-dim: rgba(225, 29, 72, 0.08);
+
+      --shadow-flat: 0 1px 3px rgba(0, 0, 0, 0.08);
+      --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.06);
     }
 
-    /* ==========================================================================
-       Reset & Base Styles
-       ========================================================================== */
+    /* Reset & Base */
     *, *::before, *::after {
       box-sizing: border-box;
       margin: 0;
@@ -106,96 +105,22 @@
     }
 
     html {
-      scroll-behavior: smooth;
       font-size: 16px;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
+      scroll-behavior: smooth;
+      color-scheme: dark light;
     }
 
     body {
       font-family: var(--font-sans);
-      background-color: var(--bg-base);
+      background-color: var(--bg-canvas);
       color: var(--text-primary);
-      line-height: 1.65;
-      overflow-x: hidden;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      position: relative;
-    }
-
-    /* Subtle background grid pattern */
-    body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
       background-image: 
-        linear-gradient(to right, var(--border-subtle) 1px, transparent 1px),
-        linear-gradient(to bottom, var(--border-subtle) 1px, transparent 1px);
-      background-size: 40px 40px;
-      mask-image: radial-gradient(ellipse 60% 50% at 50% 0%, #000 70%, transparent 100%);
-      -webkit-mask-image: radial-gradient(ellipse 60% 50% at 50% 0%, #000 70%, transparent 100%);
-      pointer-events: none;
-      z-index: 0;
-    }
-
-    /* Ambient glow blobs */
-    .glow-blob {
-      position: absolute;
-      border-radius: var(--radius-full);
-      filter: blur(120px);
-      pointer-events: none;
-      z-index: 0;
-      opacity: 0.45;
-    }
-    .glow-cyan {
-      top: -100px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 700px;
-      height: 400px;
-      background: radial-gradient(circle, var(--cyan-500) 0%, transparent 70%);
-    }
-    .glow-violet {
-      top: 600px;
-      right: 5%;
-      width: 500px;
-      height: 450px;
-      background: radial-gradient(circle, var(--violet-500) 0%, transparent 70%);
-      opacity: 0.3;
-    }
-
-    /* Accessibility Focus */
-    :focus-visible {
-      outline: 2px solid var(--cyan-400);
-      outline-offset: 3px;
-      border-radius: var(--radius-sm);
-    }
-
-    .skip-link {
-      position: absolute;
-      top: -60px;
-      left: 16px;
-      background: var(--cyan-500);
-      color: #000;
-      font-weight: 700;
-      padding: 10px 18px;
-      border-radius: var(--radius-sm);
-      z-index: 1000;
-      transition: top var(--transition-fast);
-      text-decoration: none;
-    }
-    .skip-link:focus {
-      top: 16px;
-    }
-
-    a {
-      color: inherit;
-      text-decoration: none;
-    }
-
-    img, svg {
-      vertical-align: middle;
+        radial-gradient(var(--border-subtle) 1px, transparent 1px);
+      background-size: 24px 24px;
+      min-height: 100vh;
     }
 
     .container {
@@ -203,1113 +128,1060 @@
       max-width: var(--container-max);
       margin: 0 auto;
       padding: 0 24px;
-      position: relative;
-      z-index: 1;
     }
 
-    /* ==========================================================================
-       Header & Navigation
-       ========================================================================== */
-    .site-header {
+    /* Accessibility */
+    .skip-to-content {
+      position: absolute;
+      top: -60px;
+      left: 16px;
+      background: var(--signal-copper);
+      color: white;
+      padding: 8px 16px;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      z-index: 9999;
+      transition: top 0.2s ease;
+    }
+    .skip-to-content:focus {
+      top: 16px;
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--signal-copper);
+      outline-offset: 3px;
+    }
+
+    /* Navigation Bar */
+    .top-nav {
       position: sticky;
       top: 0;
-      width: 100%;
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      background-color: rgba(7, 9, 14, 0.75);
-      border-bottom: 1px solid var(--border-subtle);
       z-index: 100;
-      transition: background-color var(--transition-smooth);
+      background: rgba(9, 11, 14, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-subtle);
+      transition: background var(--transition);
     }
-    [data-theme="light"] .site-header {
-      background-color: rgba(248, 250, 252, 0.85);
+    [data-theme="light"] .top-nav {
+      background: rgba(248, 250, 252, 0.88);
     }
 
-    .nav-wrapper {
+    .nav-inner {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      height: 72px;
+      height: 64px;
     }
 
     .brand-group {
       display: flex;
       align-items: center;
       gap: 12px;
+      text-decoration: none;
+      color: inherit;
     }
 
-    .logo-mark {
-      width: 38px;
-      height: 38px;
-      border-radius: var(--radius-md);
-      background: linear-gradient(135deg, var(--cyan-500), var(--violet-500));
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      background: var(--bg-panel-elevated);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-sm);
       display: flex;
       align-items: center;
       justify-content: center;
-      color: white;
-      box-shadow: 0 0 20px var(--cyan-glow);
+      color: var(--signal-copper);
     }
 
-    .brand-name {
-      font-size: 1.25rem;
-      font-weight: 800;
-      letter-spacing: -0.03em;
-      color: var(--text-primary);
-      display: flex;
-      align-items: center;
-      gap: 8px;
+    .brand-title {
+      font-family: var(--font-display);
+      font-size: 1.125rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
     }
 
-    .version-pill {
+    .brand-tag {
       font-family: var(--font-mono);
-      font-size: 0.75rem;
+      font-size: 0.6875rem;
       font-weight: 600;
-      padding: 2px 8px;
-      border-radius: var(--radius-full);
-      background: rgba(6, 182, 212, 0.12);
-      color: var(--cyan-400);
-      border: 1px solid rgba(6, 182, 212, 0.25);
+      padding: 2px 6px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
     }
 
     .nav-links {
       display: flex;
       align-items: center;
-      gap: 32px;
+      gap: 24px;
       list-style: none;
     }
 
     .nav-link {
-      font-size: 0.9375rem;
+      font-size: 0.875rem;
       font-weight: 500;
       color: var(--text-secondary);
-      transition: color var(--transition-fast);
-      position: relative;
+      text-decoration: none;
+      transition: color var(--transition);
     }
     .nav-link:hover {
       color: var(--text-primary);
     }
 
-    .header-actions {
+    .nav-actions {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 12px;
     }
 
-    .theme-toggle-btn {
-      background: transparent;
+    .btn-nav-install {
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-panel-elevated);
+      border: 1px solid var(--border-medium);
+      color: var(--text-primary);
+      text-decoration: none;
+      transition: all var(--transition);
+    }
+    .btn-nav-install:hover {
+      border-color: var(--signal-copper);
+      color: var(--signal-copper);
+    }
+
+    .theme-toggle {
+      background: var(--bg-panel);
       border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      width: 40px;
-      height: 40px;
+      border-radius: var(--radius-sm);
+      width: 34px;
+      height: 34px;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--text-secondary);
       cursor: pointer;
-      transition: all var(--transition-fast);
+      color: var(--text-secondary);
+      transition: all var(--transition);
     }
-    .theme-toggle-btn:hover {
+    .theme-toggle:hover {
       color: var(--text-primary);
       border-color: var(--border-medium);
-      background: var(--bg-surface-elevated);
     }
 
-    .btn-github {
+    /* Mobile menu button */
+    .mobile-menu-btn {
+      display: none;
+      background: none;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+
+    /* Hero Section */
+    .hero-section {
+      padding: 72px 0 48px 0;
+    }
+
+    .hero-meta-bar {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--signal-copper);
+      background: var(--signal-copper-dim);
+      border: 1px solid rgba(249, 115, 22, 0.25);
+      padding: 4px 12px;
+      border-radius: var(--radius-sm);
+      margin-bottom: 24px;
+    }
+    .hero-meta-bar .beacon-ring {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--signal-copper);
+      box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.3);
+    }
+
+    .hero-headline {
+      font-family: var(--font-display);
+      font-size: clamp(2.5rem, 5vw, 4.25rem);
+      font-weight: 700;
+      line-height: 1.08;
+      letter-spacing: -0.035em;
+      color: var(--text-primary);
+      margin-bottom: 20px;
+      max-width: 920px;
+    }
+
+    .hero-pitch {
+      font-size: clamp(1.0625rem, 1.8vw, 1.25rem);
+      line-height: 1.6;
+      color: var(--text-secondary);
+      max-width: 740px;
+      margin-bottom: 36px;
+    }
+
+    .hero-cta-group {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 40px;
+    }
+
+    .btn-action-primary {
+      font-family: var(--font-mono);
+      font-size: 0.9375rem;
+      font-weight: 600;
+      padding: 12px 24px;
+      border-radius: var(--radius-sm);
+      background: var(--signal-copper);
+      color: white;
+      text-decoration: none;
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 16px;
-      border-radius: var(--radius-md);
-      font-size: 0.875rem;
-      font-weight: 600;
-      background: var(--bg-surface-elevated);
-      color: var(--text-primary);
-      border: 1px solid var(--border-subtle);
-      transition: all var(--transition-fast);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      transition: all var(--transition);
     }
-    .btn-github:hover {
-      border-color: var(--border-medium);
-      box-shadow: var(--shadow-sm);
-    }
-
-    .mobile-menu-toggle {
-      display: none;
-      background: none;
-      border: none;
-      color: var(--text-primary);
-      cursor: pointer;
-      padding: 8px;
-    }
-
-    /* ==========================================================================
-       Hero Section
-       ========================================================================== */
-    .hero-section {
-      padding: 72px 0 64px 0;
-      text-align: center;
-      position: relative;
-    }
-
-    .hero-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      padding: 6px 14px;
-      border-radius: var(--radius-full);
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid var(--border-medium);
-      font-size: 0.8125rem;
-      font-weight: 600;
-      color: var(--text-secondary);
-      margin-bottom: 28px;
-      backdrop-filter: blur(8px);
-      text-decoration: none;
-      transition: all var(--transition-fast);
-    }
-    .hero-badge:hover {
-      border-color: var(--cyan-500);
-      color: var(--text-primary);
+    .btn-action-primary:hover {
+      background: #ea580c;
       transform: translateY(-1px);
     }
-    .hero-badge .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: var(--radius-full);
-      background-color: var(--emerald-400);
-      box-shadow: 0 0 10px var(--emerald-400);
-      animation: pulse 2s infinite;
-    }
 
-    @keyframes pulse {
-      0%, 100% { transform: scale(1); opacity: 1; }
-      50% { transform: scale(1.2); opacity: 0.7; }
-    }
-
-    .hero-title {
-      font-size: clamp(2.25rem, 5.5vw, 4rem);
-      font-weight: 800;
-      line-height: 1.15;
-      letter-spacing: -0.035em;
-      margin-bottom: 24px;
-      max-width: 960px;
-      margin-left: auto;
-      margin-right: auto;
-    }
-
-    .gradient-text {
-      background: linear-gradient(135deg, #ffffff 30%, var(--cyan-400) 70%, var(--violet-400) 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-    [data-theme="light"] .gradient-text {
-      background: linear-gradient(135deg, #0f172a 30%, var(--cyan-500) 70%, var(--violet-500) 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .hero-subtitle {
-      font-size: clamp(1.0625rem, 2vw, 1.25rem);
-      color: var(--text-secondary);
-      max-width: 760px;
-      margin: 0 auto 36px auto;
-      font-weight: 400;
-    }
-
-    .hero-actions {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 16px;
-      flex-wrap: wrap;
-      margin-bottom: 48px;
-    }
-
-    .btn-primary {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      background: linear-gradient(135deg, var(--cyan-500), #0284c7);
-      color: white;
-      font-weight: 600;
-      font-size: 1rem;
-      padding: 14px 28px;
-      border-radius: var(--radius-md);
-      box-shadow: 0 4px 20px var(--cyan-glow);
-      transition: all var(--transition-fast);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-    }
-    .btn-primary:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 25px rgba(6, 182, 212, 0.4);
-      background: linear-gradient(135deg, var(--cyan-400), #0369a1);
-    }
-
-    .btn-secondary {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      background: var(--bg-card);
+    .btn-action-secondary {
+      font-family: var(--font-mono);
+      font-size: 0.9375rem;
+      font-weight: 500;
+      padding: 12px 22px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-panel);
       color: var(--text-primary);
-      font-weight: 600;
-      font-size: 1rem;
-      padding: 14px 26px;
-      border-radius: var(--radius-md);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
       border: 1px solid var(--border-medium);
-      backdrop-filter: blur(8px);
-      transition: all var(--transition-fast);
+      transition: all var(--transition);
     }
-    .btn-secondary:hover {
-      background: var(--bg-surface-elevated);
-      border-color: var(--cyan-500);
-      transform: translateY(-2px);
+    .btn-action-secondary:hover {
+      background: var(--bg-panel-hover);
+      border-color: var(--text-muted);
+      transform: translateY(-1px);
     }
 
-    /* Hero Fast Command Pill */
-    .quick-command-pill {
+    /* Fast install snippet pill */
+    .hero-command-box {
       display: inline-flex;
       align-items: center;
       gap: 12px;
-      background: var(--bg-surface);
+      background: var(--bg-panel);
       border: 1px solid var(--border-medium);
-      border-radius: var(--radius-full);
-      padding: 8px 16px 8px 20px;
-      font-family: var(--font-mono);
-      font-size: 0.875rem;
-      color: var(--text-secondary);
-      box-shadow: var(--shadow-sm);
-    }
-    .quick-command-pill code {
-      color: var(--cyan-400);
-    }
-    .copy-pill-btn {
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: var(--text-muted);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 4px;
       border-radius: var(--radius-sm);
-      transition: color var(--transition-fast);
+      padding: 8px 14px;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+      max-width: 100%;
     }
-    .copy-pill-btn:hover {
+    .hero-command-box code {
+      color: var(--signal-copper);
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .btn-copy-mini {
+      background: var(--bg-panel-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 4px 8px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      transition: all var(--transition);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .btn-copy-mini:hover {
       color: var(--text-primary);
+      border-color: var(--border-medium);
     }
 
     /* ==========================================================================
-       Interactive Dual-Terminal Demo (Linear / Stripe Class Widget)
+       THE CENTERPIECE: Physical LAN Topology & Packet Inspector Widget
        ========================================================================== */
-    .demo-terminal-wrapper {
-      max-width: 1040px;
-      margin: 48px auto 0 auto;
-      border-radius: var(--radius-lg);
-      background: var(--bg-code);
+    .topology-container {
+      margin-top: 48px;
+      background: var(--bg-panel);
       border: 1px solid var(--border-medium);
-      box-shadow: var(--shadow-lg), var(--shadow-glow);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-elevated);
       overflow: hidden;
-      text-align: left;
     }
 
-    .terminal-topbar {
+    .topology-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 12px 20px;
-      background: rgba(15, 23, 42, 0.85);
+      background: var(--bg-terminal);
       border-bottom: 1px solid var(--border-subtle);
-    }
-
-    .terminal-dots {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .dot {
-      width: 12px;
-      height: 12px;
-      border-radius: var(--radius-full);
-    }
-    .dot-red { background-color: #ef4444; }
-    .dot-yellow { background-color: #f59e0b; }
-    .dot-green { background-color: #10b981; }
-
-    .terminal-title {
       font-family: var(--font-mono);
-      font-size: 0.8125rem;
+      font-size: 0.75rem;
       color: var(--text-muted);
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .topology-title {
       display: flex;
       align-items: center;
       gap: 8px;
-    }
-
-    .demo-controls {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .control-btn {
-      background: var(--bg-surface-elevated);
-      border: 1px solid var(--border-subtle);
-      color: var(--text-secondary);
-      padding: 5px 12px;
-      border-radius: var(--radius-sm);
-      font-size: 0.75rem;
+      color: var(--text-primary);
       font-weight: 600;
-      cursor: pointer;
+    }
+    .topology-title .radar-icon {
+      color: var(--signal-copper);
+    }
+
+    .topology-airgap-tag {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      transition: all var(--transition-fast);
-    }
-    .control-btn:hover {
-      color: var(--text-primary);
-      border-color: var(--border-medium);
-    }
-    .control-btn.active {
-      background: var(--cyan-500);
-      color: white;
-      border-color: var(--cyan-400);
-    }
-
-    .control-select {
-      background: var(--bg-surface-elevated);
-      border: 1px solid var(--border-subtle);
-      color: var(--text-primary);
-      padding: 5px 10px;
-      border-radius: var(--radius-sm);
-      font-family: var(--font-sans);
-      font-size: 0.75rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all var(--transition-fast);
-    }
-    .control-select:hover {
-      border-color: var(--border-medium);
-    }
-    .control-select:focus-visible {
-      outline: 2px solid var(--cyan-400);
-    }
-
-    .terminals-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      min-height: 380px;
-    }
-
-    .terminal-pane {
-      padding: 24px;
-      font-family: var(--font-mono);
-      font-size: 0.875rem;
-      line-height: 1.6;
-      color: #e2e8f0;
-      position: relative;
-      display: flex;
-      flex-direction: column;
-    }
-    .pane-sender {
-      border-right: 1px solid var(--border-subtle);
-      background-color: rgba(11, 15, 25, 0.95);
-    }
-    .pane-receiver {
-      background-color: rgba(15, 23, 42, 0.95);
-    }
-
-    .pane-header {
-      font-size: 0.75rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 16px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      color: var(--text-muted);
-    }
-    .pane-badge {
+      color: var(--crypto-green);
+      background: var(--crypto-green-dim);
       padding: 2px 8px;
-      border-radius: var(--radius-full);
-      font-size: 0.7rem;
-    }
-    .badge-sender {
-      background: rgba(6, 182, 212, 0.15);
-      color: var(--cyan-400);
-      border: 1px solid rgba(6, 182, 212, 0.3);
-    }
-    .badge-receiver {
-      background: rgba(139, 92, 246, 0.15);
-      color: var(--violet-400);
-      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(16, 185, 129, 0.2);
     }
 
-    .terminal-content {
-      flex: 1;
+    /* Physical Diagram Representation */
+    .topology-schematic {
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1fr 180px 1fr;
+      align-items: center;
+      gap: 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: var(--bg-input);
+    }
+
+    .node-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-sm);
+      padding: 16px;
       display: flex;
       flex-direction: column;
       gap: 8px;
     }
 
-    .terminal-line {
+    .node-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 8px;
+    }
+
+    .node-id {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .node-ip {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--wire-blue);
+      background: var(--wire-blue-dim);
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+    }
+
+    .node-prop {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+    }
+    .node-val {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    /* Middle Conduit */
+    .conduit-zone {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      text-align: center;
+    }
+
+    .conduit-line {
+      width: 100%;
+      height: 2px;
+      background: var(--border-strong);
+      position: relative;
+    }
+    .conduit-pulse {
+      position: absolute;
+      top: -3px;
+      width: 12px;
+      height: 8px;
+      background: var(--signal-copper);
+      border-radius: 2px;
+      box-shadow: 0 0 8px var(--signal-copper);
+      animation: transferBeam 2s infinite ease-in-out;
+    }
+    @keyframes transferBeam {
+      0% { left: 0; opacity: 0.2; }
+      50% { opacity: 1; }
+      100% { left: calc(100% - 12px); opacity: 0.2; }
+    }
+
+    .conduit-label {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .conduit-badge {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--crypto-green);
+      background: var(--crypto-green-dim);
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+    }
+
+    /* Scenario Selector Toolbar */
+    .scenario-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border-subtle);
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .scenario-label {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .scenario-buttons {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn-scenario {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-panel-elevated);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-scenario:hover {
+      color: var(--text-primary);
+      border-color: var(--border-medium);
+    }
+    .btn-scenario.active {
+      background: var(--signal-copper-dim);
+      border-color: var(--signal-copper);
+      color: var(--signal-copper);
+    }
+
+    .btn-run-sim {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: var(--radius-sm);
+      background: var(--signal-copper);
+      border: 1px solid transparent;
+      color: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all var(--transition);
+    }
+    .btn-run-sim:hover {
+      background: #ea580c;
+    }
+
+    /* Split Screen Terminal Log View */
+    .terminal-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      background: var(--bg-terminal);
+      min-height: 280px;
+    }
+
+    .terminal-pane {
+      padding: 16px 20px;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      color: #e2e8f0;
+      overflow-x: auto;
+    }
+    .terminal-pane:first-child {
+      border-right: 1px solid var(--border-subtle);
+    }
+
+    .pane-tag {
+      display: inline-block;
+      font-size: 0.6875rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      margin-bottom: 12px;
+    }
+    .tag-sender {
+      background: var(--signal-copper-dim);
+      color: var(--signal-copper);
+      border: 1px solid rgba(249, 115, 22, 0.3);
+    }
+    .tag-receiver {
+      background: var(--wire-blue-dim);
+      color: var(--wire-blue);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+
+    .sim-line {
+      margin: 4px 0;
       opacity: 0;
       transform: translateY(4px);
-      transition: opacity 200ms ease, transform 200ms ease;
+      transition: all 0.2s ease;
     }
-    .terminal-line.visible {
+    .sim-line.visible {
       opacity: 1;
       transform: translateY(0);
     }
 
-    .prompt-symbol {
-      color: var(--emerald-400);
-      margin-right: 8px;
+    .sim-dim { color: var(--text-muted); }
+    .sim-cmd { color: #f8fafc; font-weight: 600; }
+    .sim-code { color: var(--signal-amber); font-weight: 700; }
+    .sim-ok { color: var(--crypto-green); font-weight: 600; }
+    .sim-err { color: var(--danger-red); font-weight: 600; }
+    .sim-progress { color: var(--wire-blue); }
+
+    /* Wire Protocol Stepper Footer */
+    .protocol-stepper {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      border-top: 1px solid var(--border-subtle);
+      background: var(--bg-panel);
     }
-    .cmd-text {
-      color: #ffffff;
-      font-weight: 600;
+    .step-unit {
+      padding: 12px 14px;
+      border-right: 1px solid var(--border-subtle);
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
     }
-    .code-highlight {
-      color: var(--amber-400);
-      font-weight: 700;
-      background: rgba(251, 191, 36, 0.1);
-      padding: 1px 6px;
-      border-radius: 4px;
-    }
-    .progress-bar-container {
-      width: 100%;
-      height: 8px;
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 4px;
-      overflow: hidden;
-      margin: 8px 0;
-    }
-    .progress-bar-fill {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, var(--cyan-500), var(--emerald-400));
-      transition: width 100ms linear;
-    }
-    .success-text {
-      color: var(--emerald-400);
-      font-weight: 600;
-    }
-    .dim-text {
+    .step-unit:last-child { border-right: none; }
+    .step-num {
       color: var(--text-muted);
+      margin-bottom: 2px;
+    }
+    .step-name {
+      font-weight: 600;
+      color: var(--text-primary);
     }
 
     /* ==========================================================================
-       Features Section (Value Props Grid)
+       The 0-Hop vs 14-Hop Comparison Section
        ========================================================================== */
-    .section-title-wrapper {
-      text-align: center;
-      max-width: 760px;
-      margin: 0 auto 56px auto;
+    .comparison-section {
+      padding: 80px 0;
+      border-top: 1px solid var(--border-subtle);
     }
 
-    .section-pill {
-      display: inline-block;
-      font-family: var(--font-mono);
-      font-size: 0.8125rem;
-      font-weight: 600;
-      color: var(--cyan-400);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 12px;
-    }
-
-    .section-heading {
-      font-size: clamp(2rem, 4vw, 2.75rem);
-      font-weight: 800;
-      letter-spacing: -0.03em;
-      line-height: 1.2;
-      margin-bottom: 16px;
-    }
-
-    .section-subheading {
-      font-size: 1.125rem;
-      color: var(--text-secondary);
-    }
-
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-      gap: 24px;
-      margin-bottom: 96px;
-    }
-
-    .feature-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-lg);
-      padding: 32px;
-      backdrop-filter: blur(12px);
-      transition: all var(--transition-smooth);
-      position: relative;
-      overflow: hidden;
-    }
-    .feature-card:hover {
-      background: var(--bg-card-hover);
-      border-color: var(--border-medium);
-      transform: translateY(-4px);
-      box-shadow: var(--shadow-md);
-    }
-
-    .card-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: var(--radius-md);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 24px;
-      background: var(--bg-surface-elevated);
-      color: var(--cyan-400);
-      border: 1px solid var(--border-subtle);
-    }
-    .feature-card:nth-child(2) .card-icon { color: var(--violet-400); }
-    .feature-card:nth-child(3) .card-icon { color: var(--emerald-400); }
-    .feature-card:nth-child(4) .card-icon { color: var(--amber-400); }
-
-    .card-title {
-      font-size: 1.25rem;
-      font-weight: 700;
-      margin-bottom: 12px;
-      letter-spacing: -0.015em;
-    }
-
-    .card-desc {
-      color: var(--text-secondary);
-      font-size: 0.9375rem;
-      line-height: 1.6;
-    }
-
-    /* Mobile Drawer */
-    .mobile-drawer {
-      display: none;
-      position: fixed;
-      top: 72px;
-      left: 0;
-      width: 100%;
-      background: var(--bg-surface-elevated);
-      border-bottom: 1px solid var(--border-medium);
-      padding: 24px;
-      z-index: 99;
-      box-shadow: var(--shadow-lg);
-      flex-direction: column;
-      gap: 16px;
-    }
-    .mobile-drawer.open {
-      display: flex;
-    }
-    .mobile-drawer-link {
-      font-size: 1rem;
-      font-weight: 600;
-      color: var(--text-primary);
-      padding: 10px 0;
-      border-bottom: 1px solid var(--border-subtle);
-    }
-
-    /* Architecture Banner Explicit Contrast */
-    .arch-banner {
-      background: linear-gradient(135deg, #0e131f 0%, #141b2d 100%) !important;
-      border: 1px solid rgba(255, 255, 255, 0.12) !important;
-      border-radius: var(--radius-xl);
-      padding: 48px;
-      margin-bottom: 96px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 40px;
-      box-shadow: var(--shadow-lg);
-      position: relative;
-      overflow: hidden;
-      color: #f8fafc !important;
-    }
-
-    .arch-banner::after {
-      content: '';
-      position: absolute;
-      right: -100px;
-      top: -100px;
-      width: 350px;
-      height: 350px;
-      background: radial-gradient(circle, var(--cyan-glow), transparent 70%);
-      pointer-events: none;
-    }
-
-    .arch-content {
-      max-width: 620px;
-    }
-
-    .arch-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
+    .section-eyebrow {
       font-family: var(--font-mono);
       font-size: 0.75rem;
-      color: var(--cyan-400);
-      background: rgba(6, 182, 212, 0.15);
-      border: 1px solid rgba(6, 182, 212, 0.3);
-      padding: 4px 12px;
-      border-radius: var(--radius-full);
-      margin-bottom: 16px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .arch-heading {
-      font-size: 2rem;
-      font-weight: 800;
-      letter-spacing: -0.025em;
-      margin-bottom: 16px;
-      color: #ffffff !important;
-    }
-
-    .arch-desc {
-      color: #cbd5e1 !important;
-      font-size: 1rem;
-      margin-bottom: 28px;
-      line-height: 1.6;
-    }
-
-    .arch-actions {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      flex-wrap: wrap;
-    }
-
-    .arch-preview-card {
-      background: #0b0f19 !important;
-      border: 1px solid rgba(255, 255, 255, 0.15) !important;
-      border-radius: var(--radius-lg);
-      padding: 24px;
-      min-width: 320px;
-      box-shadow: var(--shadow-md);
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-      color: #e2e8f0 !important;
-    }
-
-    .flow-step {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-family: var(--font-mono);
-      font-size: 0.8125rem;
-      color: #e2e8f0 !important;
-    }
-    .flow-num {
-      width: 24px;
-      height: 24px;
-      border-radius: var(--radius-full);
-      background: rgba(6, 182, 212, 0.2);
-      color: var(--cyan-400);
-      display: flex;
-      align-items: center;
-      justify-content: center;
       font-weight: 700;
-      border: 1px solid rgba(6, 182, 212, 0.4);
-    }
-
-    /* Tabs Styling Polish */
-    [data-theme="light"] .tabs-container {
-      background: #ffffff;
-    }
-    [data-theme="light"] .tabs-nav {
-      background: #f1f5f9;
-      border-bottom: 1px solid #e2e8f0;
-    }
-    [data-theme="light"] .tab-btn {
-      color: #64748b;
-    }
-    [data-theme="light"] .tab-btn.active {
-      color: #0284c7;
-      background: #ffffff;
-      border-bottom-color: #0284c7;
-    }
-    [data-theme="light"] .code-box {
-      background: #0f172a;
-      color: #f8fafc;
-    }
-    [data-theme="light"] .cli-table th {
-      background: #f1f5f9;
-      color: #475569;
-    }
-    [data-theme="light"] .cli-table td {
-      color: #334155;
-    }
-
-    /* Quick command pill polish */
-    .quick-command-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 12px;
-      background: var(--bg-surface);
-      border: 1px solid var(--border-medium);
-      border-radius: var(--radius-full);
-      padding: 8px 16px 8px 20px;
-      font-family: var(--font-mono);
-      font-size: 0.875rem;
-      color: var(--text-secondary);
-      box-shadow: var(--shadow-sm);
-      max-width: 100%;
-    }
-    .quick-command-pill code {
-      color: var(--cyan-400);
-    }
-    [data-theme="light"] .quick-command-pill code {
-      color: #0284c7;
-    }
-
-    /* ==========================================================================
-       Install & Quickstart Tabs
-       ========================================================================== */
-    .install-section {
-      padding: 48px 0 96px 0;
-    }
-
-    .tabs-container {
-      max-width: 880px;
-      margin: 0 auto;
-      background: var(--bg-surface);
-      border: 1px solid var(--border-medium);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      box-shadow: var(--shadow-lg);
-    }
-
-    .tabs-nav {
-      display: flex;
-      align-items: center;
-      border-bottom: 1px solid var(--border-subtle);
-      background: var(--bg-code);
-      overflow-x: auto;
-    }
-
-    .tab-btn {
-      padding: 16px 24px;
-      background: none;
-      border: none;
-      color: var(--text-secondary);
-      font-size: 0.9375rem;
-      font-weight: 600;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      white-space: nowrap;
-      border-bottom: 2px solid transparent;
-      transition: all var(--transition-fast);
-    }
-    .tab-btn:hover {
-      color: var(--text-primary);
-    }
-    .tab-btn.active {
-      color: var(--cyan-400);
-      border-bottom-color: var(--cyan-400);
-      background: rgba(6, 182, 212, 0.05);
-    }
-
-    .tab-pane {
-      display: none;
-      padding: 32px;
-    }
-    .tab-pane.active {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--signal-copper);
+      margin-bottom: 8px;
       display: block;
     }
 
-    .code-box {
-      position: relative;
-      background: var(--bg-code);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      padding: 20px 24px;
-      font-family: var(--font-mono);
-      font-size: 0.875rem;
-      color: #e2e8f0;
-      overflow-x: auto;
-      margin-bottom: 16px;
-    }
-
-    .code-copy-btn {
-      position: absolute;
-      top: 14px;
-      right: 14px;
-      background: var(--bg-surface-elevated);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-sm);
-      color: var(--text-secondary);
-      padding: 6px 12px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      transition: all var(--transition-fast);
-    }
-    .code-copy-btn:hover {
+    .section-title {
+      font-family: var(--font-display);
+      font-size: clamp(1.75rem, 3.5vw, 2.5rem);
+      font-weight: 700;
+      line-height: 1.2;
       color: var(--text-primary);
-      border-color: var(--border-medium);
+      margin-bottom: 16px;
+      letter-spacing: -0.025em;
     }
 
-    .pane-description {
+    .section-subtitle {
+      font-size: 1.0625rem;
       color: var(--text-secondary);
-      font-size: 0.9375rem;
+      max-width: 680px;
+      margin-bottom: 48px;
     }
 
-    .binary-download-grid {
+    .routes-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 12px;
-      margin-top: 14px;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
     }
-    .binary-card {
+
+    .route-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-md);
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .route-card.wisp-route {
+      border-color: rgba(16, 185, 129, 0.4);
+      background: linear-gradient(180deg, var(--bg-panel), var(--bg-input));
+    }
+
+    .route-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 14px 18px;
-      background: var(--bg-card);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
+    }
+
+    .route-name {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      font-weight: 700;
       color: var(--text-primary);
-      text-decoration: none;
-      transition: all var(--transition-fast);
     }
-    .binary-card:hover {
-      border-color: var(--cyan-500);
-      background: var(--bg-surface-elevated);
-      transform: translateY(-2px);
-      box-shadow: var(--shadow-sm);
+
+    .route-badge {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
     }
-    .binary-card-meta {
+    .badge-bad {
+      background: var(--danger-red-dim);
+      color: var(--danger-red);
+      border: 1px solid rgba(244, 63, 94, 0.2);
+    }
+    .badge-good {
+      background: var(--crypto-green-dim);
+      color: var(--crypto-green);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+
+    .hop-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+    }
+
+    .hop-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 10px;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+    }
+    .hop-item.external {
+      border-color: rgba(244, 63, 94, 0.25);
+      color: #fda4af;
+    }
+    .hop-item.local-only {
+      border-color: rgba(16, 185, 129, 0.25);
+      color: #6ee7b7;
+    }
+
+    .hop-metric {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 16px;
+      font-family: var(--font-mono);
+    }
+    .metric-box {
       display: flex;
       flex-direction: column;
       gap: 2px;
     }
-    .binary-name {
-      font-weight: 600;
-      font-size: 0.9375rem;
-    }
-    .binary-tag {
-      font-size: 0.75rem;
-      color: var(--text-secondary);
-      font-family: var(--font-mono);
-    }
-    .binary-card svg {
-      color: var(--cyan-400);
-      flex-shrink: 0;
-      transition: transform var(--transition-fast);
-    }
-    .binary-card:hover svg {
-      transform: translateY(2px);
-    }
+    .metric-label { font-size: 0.6875rem; color: var(--text-muted); }
+    .metric-val { font-size: 0.9375rem; font-weight: 700; color: var(--text-primary); }
 
     /* ==========================================================================
-       CLI Command Cheatsheet
+       Installation & Downloads Section
        ========================================================================== */
-    .cli-table-wrapper {
-      max-width: 880px;
-      margin: 48px auto 96px auto;
-      background: var(--bg-surface);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      box-shadow: var(--shadow-md);
-    }
-
-    .cli-table {
-      width: 100%;
-      border-collapse: collapse;
-      text-align: left;
-      font-size: 0.9375rem;
-    }
-    .cli-table th {
-      background: var(--bg-code);
-      padding: 16px 24px;
-      font-size: 0.75rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-muted);
-      border-bottom: 1px solid var(--border-subtle);
-    }
-    .cli-table td {
-      padding: 16px 24px;
-      border-bottom: 1px solid var(--border-subtle);
-      color: var(--text-secondary);
-    }
-    .cli-table tr:last-child td {
-      border-bottom: none;
-    }
-    .cli-table code {
-      font-family: var(--font-mono);
-      color: var(--cyan-400);
-      font-size: 0.875rem;
-      background: rgba(6, 182, 212, 0.08);
-      padding: 2px 8px;
-      border-radius: 4px;
-    }
-
-    /* ==========================================================================
-       Footer
-       ========================================================================== */
-    .site-footer {
+    .install-section {
+      padding: 80px 0;
       border-top: 1px solid var(--border-subtle);
-      background-color: var(--bg-surface);
-      padding: 64px 0 40px 0;
-      margin-top: auto;
+    }
+
+    .tab-nav {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--border-medium);
+      margin-bottom: 24px;
+      overflow-x: auto;
+    }
+
+    .tab-trigger {
+      font-family: var(--font-mono);
       font-size: 0.875rem;
-      color: var(--text-muted);
+      font-weight: 600;
+      padding: 12px 20px;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all var(--transition);
+      white-space: nowrap;
     }
-
-    .footer-grid {
-      display: grid;
-      grid-template-columns: 2fr 1fr 1fr 1fr;
-      gap: 48px;
-      margin-bottom: 48px;
-    }
-
-    .footer-brand p {
-      margin-top: 16px;
-      max-width: 320px;
-      line-height: 1.6;
-    }
-
-    .footer-col h4 {
+    .tab-trigger:hover {
       color: var(--text-primary);
-      font-size: 0.875rem;
-      font-weight: 700;
-      margin-bottom: 16px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
+    }
+    .tab-trigger.active {
+      color: var(--signal-copper);
+      border-bottom-color: var(--signal-copper);
+      background: var(--signal-copper-dim);
     }
 
-    .footer-col ul {
-      list-style: none;
+    .tab-content {
+      display: none;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-md);
+      padding: 24px;
+    }
+    .tab-content.active {
+      display: block;
+    }
+
+    .code-display {
+      background: var(--bg-terminal);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 16px 20px;
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 12px 0 20px 0;
+      overflow-x: auto;
+    }
+    .code-display code {
+      white-space: nowrap;
+    }
+
+    .btn-copy-code {
+      background: var(--bg-panel-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 6px 12px;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all var(--transition);
+      flex-shrink: 0;
+    }
+    .btn-copy-code:hover {
+      color: var(--text-primary);
+      border-color: var(--border-medium);
+    }
+
+    .binaries-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .binary-tile {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 14px 18px;
+      text-decoration: none;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all var(--transition);
+    }
+    .binary-tile:hover {
+      border-color: var(--signal-copper);
+      background: var(--bg-panel-hover);
+      transform: translateY(-2px);
+    }
+
+    .tile-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .tile-name {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 0.9375rem;
+    }
+    .tile-spec {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+    .tile-icon {
+      color: var(--signal-copper);
+    }
+
+    /* ==========================================================================
+       Cryptographic Invariants & Threat Model Matrix
+       ========================================================================== */
+    .specs-section {
+      padding: 80px 0;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .specs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+    }
+
+    .spec-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-md);
+      padding: 24px;
       display: flex;
       flex-direction: column;
       gap: 12px;
     }
 
-    .footer-col a {
-      color: var(--text-secondary);
-      transition: color var(--transition-fast);
+    .spec-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
-    .footer-col a:hover {
-      color: var(--cyan-400);
+    .spec-num {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--signal-copper);
+      background: var(--signal-copper-dim);
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+    }
+    .spec-title {
+      font-family: var(--font-display);
+      font-size: 1.125rem;
+      font-weight: 700;
+    }
+    .spec-text {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
     }
 
-    .footer-bottom {
+    /* Architecture Banner Deep-Link */
+    .arch-banner {
+      margin-top: 60px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-md);
+      padding: 32px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      border-top: 1px solid var(--border-subtle);
-      padding-top: 32px;
+      gap: 24px;
       flex-wrap: wrap;
-      gap: 16px;
+    }
+    .arch-text {
+      max-width: 640px;
+    }
+    .arch-title {
+      font-family: var(--font-display);
+      font-size: 1.375rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .arch-sub {
+      font-size: 0.9375rem;
+      color: var(--text-secondary);
     }
 
-    /* ==========================================================================
-       Responsive Breakpoints (1440, 768, 375)
-       ========================================================================== */
-    @media (max-width: 1024px) {
-      .arch-banner {
-        flex-direction: column;
-        align-items: flex-start;
+    /* Footer */
+    .site-footer {
+      border-top: 1px solid var(--border-subtle);
+      padding: 48px 0;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      background: var(--bg-canvas);
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 20px;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 20px;
+      list-style: none;
+      font-family: var(--font-mono);
+    }
+    .footer-links a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      transition: color var(--transition);
+    }
+    .footer-links a:hover {
+      color: var(--signal-copper);
+    }
+
+    /* Responsiveness */
+    @media (max-width: 880px) {
+      .topology-schematic {
+        grid-template-columns: 1fr;
+        gap: 16px;
       }
-      .arch-preview-card {
-        width: 100%;
+      .conduit-zone {
+        padding: 8px 0;
+      }
+      .routes-grid {
+        grid-template-columns: 1fr;
+      }
+      .terminal-split {
+        grid-template-columns: 1fr;
+      }
+      .terminal-pane:first-child {
+        border-right: none;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .protocol-stepper {
+        grid-template-columns: 1fr;
+      }
+      .step-unit {
+        border-right: none;
+        border-bottom: 1px solid var(--border-subtle);
       }
     }
 
     @media (max-width: 768px) {
-      .nav-links {
+      .nav-links, .btn-nav-install {
         display: none;
       }
-      .mobile-menu-toggle {
-        display: block;
+      .mobile-menu-btn {
+        display: flex;
       }
-      .terminals-grid {
-        grid-template-columns: 1fr;
+      .hero-headline {
+        font-size: 2.25rem;
       }
-      .pane-sender {
-        border-right: none;
-        border-bottom: 1px solid var(--border-subtle);
-      }
-      .footer-grid {
-        grid-template-columns: 1fr 1fr;
-      }
-    }
-
-    @media (max-width: 600px) {
-      .terminal-title {
-        display: none;
-      }
-      .terminal-topbar {
-        justify-content: space-between;
-      }
-    }
-
-    @media (max-width: 480px) {
-      .footer-grid {
-        grid-template-columns: 1fr;
-      }
-      .hero-actions {
-        flex-direction: column;
-        width: 100%;
-      }
-      .btn-primary, .btn-secondary {
-        width: 100%;
-        justify-content: center;
-      }
-      .quick-command-pill {
-        width: 100%;
-        overflow-x: auto;
-        white-space: nowrap;
-        justify-content: space-between;
+      .hero-section {
+        padding: 48px 0 32px 0;
       }
     }
   </style>
 </head>
 <body>
-  <!-- Accessible Skip Link -->
-  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <a href="#main-content" class="skip-to-content">Skip to content</a>
 
-  <!-- Ambient background glow -->
-  <div class="glow-blob glow-cyan" aria-hidden="true"></div>
-  <div class="glow-blob glow-violet" aria-hidden="true"></div>
-
-  <!-- Header -->
-  <header class="site-header" role="banner">
-    <div class="container nav-wrapper">
-      <div class="brand-group">
-        <div class="logo-mark" aria-hidden="true">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+  <!-- Top Navigation -->
+  <header class="top-nav">
+    <div class="container nav-inner">
+      <a href="#" class="brand-group" aria-label="Wisp Home">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
           </svg>
         </div>
-        <a href="#" class="brand-name">
-          Wisp
-          <span class="version-pill">WSP/2</span>
-        </a>
-      </div>
+        <span class="brand-title">WISP</span>
+        <span class="brand-tag">v0.2.0</span>
+      </a>
 
-      <nav class="site-nav" role="navigation" aria-label="Main Navigation">
+      <nav aria-label="Primary Navigation">
         <ul class="nav-links">
-          <li><a href="#features" class="nav-link">Features</a></li>
-          <li><a href="#simulator" class="nav-link">Live Demo</a></li>
+          <li><a href="#topology" class="nav-link">LAN Topology</a></li>
+          <li><a href="#comparison" class="nav-link">0-Hop Routing</a></li>
+          <li><a href="#install" class="nav-link">Installation</a></li>
+          <li><a href="#specifications" class="nav-link">Protocol Spec</a></li>
           <li><a href="architecture/wisp-architecture.html" class="nav-link">Architecture</a></li>
-          <li><a href="#install" class="nav-link">Quickstart</a></li>
-          <li><a href="#cheatsheet" class="nav-link">CLI Guide</a></li>
         </ul>
       </nav>
 
-      <div class="header-actions">
-        <button id="themeToggle" class="theme-toggle-btn" aria-label="Toggle Light/Dark Theme" title="Toggle Theme">
-          <svg id="themeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <div class="nav-actions">
+        <a href="#install" class="btn-nav-install">curl | bash</a>
+
+        <a href="https://github.com/YohannHommet/wisp" class="theme-toggle" target="_blank" rel="noopener" aria-label="GitHub Repository" title="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+          </svg>
+        </a>
+
+        <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark/light theme" id="theme-btn" title="Toggle theme">
+          <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="5"></circle>
             <line x1="12" y1="1" x2="12" y2="3"></line>
             <line x1="12" y1="21" x2="12" y2="23"></line>
@@ -1321,203 +1193,257 @@
             <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
           </svg>
         </button>
-
-        <a href="https://github.com/YohannHommet/wisp" target="_blank" rel="noopener noreferrer" class="btn-github">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
-          </svg>
-          <span>GitHub</span>
-        </a>
-
-        <button id="mobileMenuBtn" class="mobile-menu-toggle" aria-label="Toggle Navigation Menu" aria-expanded="false" title="Menu">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="3" y1="12" x2="21" y2="12"></line>
-            <line x1="3" y1="6" x2="21" y2="6"></line>
-            <line x1="3" y1="18" x2="21" y2="18"></line>
-          </svg>
-        </button>
       </div>
-    </div>
-
-    <!-- Mobile Drawer -->
-    <div id="mobileDrawer" class="mobile-drawer" role="dialog" aria-modal="true" aria-label="Mobile Navigation">
-      <a href="#features" class="mobile-drawer-link" onclick="closeMobileMenu()">Features</a>
-      <a href="#simulator" class="mobile-drawer-link" onclick="closeMobileMenu()">Live Demo</a>
-      <a href="architecture/wisp-architecture.html" class="mobile-drawer-link" onclick="closeMobileMenu()">Architecture</a>
-      <a href="#install" class="mobile-drawer-link" onclick="closeMobileMenu()">Quickstart</a>
-      <a href="#cheatsheet" class="mobile-drawer-link" onclick="closeMobileMenu()">CLI Guide</a>
     </div>
   </header>
 
-  <!-- Main Content -->
+  <!-- Main Content Area -->
   <main id="main-content">
     <!-- Hero Section -->
     <section class="hero-section">
       <div class="container">
-        <a href="https://github.com/YohannHommet/wisp/releases/tag/v0.2.0" class="hero-badge" target="_blank" rel="noopener noreferrer" title="View Wisp v0.2.0 Release on GitHub">
-          <span class="status-dot"></span>
-          <span>v0.2.0 is live · WSP/2 Protocol · 100% Safe Rust</span>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.7;">
-            <path d="M5 12h14"></path>
-            <path d="m12 5 7 7-7 7"></path>
-          </svg>
-        </a>
+        <div class="hero-meta-bar">
+          <span class="beacon-ring" aria-hidden="true"></span>
+          <span>Local Subnet Transfer · QUIC TLS 1.3 · 100% Safe Rust</span>
+        </div>
 
-        <h1 class="hero-title">
-          Zero-cloud, cryptographically verified <span class="gradient-text">LAN file transfers.</span>
+        <h1 class="hero-headline">
+          Send a file across the room.<br>
+          Not across the cloud.
         </h1>
 
-        <p class="hero-subtitle">
-          Send any file between computers on the same network at wire speed. No servers, no accounts, no cloud relays, no tracking. Authenticated with SPAKE2 key exchange and sealed with BLAKE3 cryptographic receipts.
+        <p class="hero-pitch">
+          Direct peer-to-peer file transfers over Wi-Fi and Ethernet. No accounts, no intermediate servers, no cloud relays, no tracking. Authenticated via SPAKE2, encrypted with QUIC TLS 1.3, and verified with streaming BLAKE3.
         </p>
 
-        <div class="hero-actions">
-          <a href="#install" class="btn-primary">
-            <span>Install Wisp</span>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <div class="hero-cta-group">
+          <a href="#install" class="btn-action-primary">
+            <span>Install Wisp v0.2.0</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <line x1="5" y1="12" x2="19" y2="12"></line>
               <polyline points="12 5 19 12 12 19"></polyline>
             </svg>
           </a>
 
-          <a href="https://github.com/YohannHommet/wisp/releases/tag/v0.2.0" class="btn-secondary" target="_blank" rel="noopener noreferrer">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <a href="https://github.com/YohannHommet/wisp/releases/tag/v0.2.0" class="btn-action-secondary" target="_blank" rel="noopener">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
               <polyline points="7 10 12 15 17 10"></polyline>
               <line x1="12" y1="15" x2="12" y2="3"></line>
             </svg>
-            <span>Download v0.2.0</span>
+            <span>Direct Binaries (.tar.gz / .exe)</span>
           </a>
 
-          <a href="architecture/wisp-architecture.html" class="btn-secondary">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <a href="architecture/wisp-architecture.html" class="btn-action-secondary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
               <polyline points="2 17 12 22 22 17"></polyline>
               <polyline points="2 12 12 17 22 12"></polyline>
             </svg>
-            <span>Architecture Diagram</span>
+            <span>Interactive Architecture</span>
           </a>
         </div>
 
-        <div class="quick-command-pill">
+        <div class="hero-command-box">
           <span>Quick Install:</span>
           <code>curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash</code>
-          <button class="copy-pill-btn" onclick="copySnippet('curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash', this)" aria-label="Copy installation command" title="Copy command">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
+          <button class="btn-copy-mini" onclick="copyText('curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash', this)" title="Copy one-line installer">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span>Copy</span>
           </button>
         </div>
 
-        <!-- Interactive Terminal Simulator Widget -->
-        <div class="demo-terminal-wrapper" id="simulator" aria-label="Interactive Terminal Simulation">
-          <div class="terminal-topbar">
-            <div class="terminal-dots">
-              <div class="dot dot-red"></div>
-              <div class="dot dot-yellow"></div>
-              <div class="dot dot-green"></div>
-            </div>
-            <div class="terminal-title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="4 17 10 11 4 5"></polyline>
-                <line x1="12" y1="19" x2="20" y2="19"></line>
+        <!-- The Physical Topology & Wire Packet Inspector -->
+        <div class="topology-container" id="topology">
+          <div class="topology-header">
+            <div class="topology-title">
+              <svg class="radar-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="2" x2="12" y2="12"></line>
               </svg>
-              <span>Wisp Interactive Split-Terminal Simulation</span>
+              <span>PHYSICAL SUBNET TOPOLOGY · ZERO INTERNET TRANSIT</span>
             </div>
-            <div class="demo-controls">
-              <select id="scenarioSelector" class="control-select" onchange="changeScenario(this.value)" aria-label="Select Demo Scenario">
-                <option value="nominal">Scenario 1: Nominal Verified Transfer</option>
-                <option value="noclobber">Scenario 2: No-Clobber Collision</option>
-                <option value="wrongpin">Scenario 3: Adversarial Wrong PIN</option>
-              </select>
-              <button id="demoPlayBtn" class="control-btn active" onclick="toggleSimulation()">
-                <svg id="playIcon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                </svg>
-                <span id="playText">Replay</span>
+            <div class="topology-airgap-tag">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+              <span>AIR-GAPPED COMPATIBLE</span>
+            </div>
+          </div>
+
+          <!-- Schematic Diagram of the 2 physical nodes -->
+          <div class="topology-schematic">
+            <!-- Node Alpha: Sender -->
+            <div class="node-card">
+              <div class="node-header">
+                <span class="node-id">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                  NODE ALPHA (SENDER)
+                </span>
+                <span class="node-ip">192.168.1.42:44833</span>
+              </div>
+              <div class="node-prop"><span>Command:</span><span class="node-val">wisp send report.pdf</span></div>
+              <div class="node-prop"><span>Payload:</span><span class="node-val">24.8 MB (SHA-256 Verified)</span></div>
+              <div class="node-prop"><span>Session PIN:</span><span class="node-val" style="color:var(--signal-amber)">68770468-solar-...</span></div>
+            </div>
+
+            <!-- Conduit / Airwaves Zone -->
+            <div class="conduit-zone">
+              <span class="conduit-label">Direct Socket Link</span>
+              <div class="conduit-line">
+                <div class="conduit-pulse" id="beam-pulse"></div>
+              </div>
+              <span class="conduit-badge" id="beam-status">Quinn QUIC / TLS 1.3</span>
+              <span class="conduit-label">Latency &lt; 1.2 ms</span>
+            </div>
+
+            <!-- Node Beta: Receiver -->
+            <div class="node-card">
+              <div class="node-header">
+                <span class="node-id">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                  NODE BETA (RECEIVER)
+                </span>
+                <span class="node-ip">192.168.1.88</span>
+              </div>
+              <div class="node-prop"><span>Command:</span><span class="node-val">wisp recv 68770468-...</span></div>
+              <div class="node-prop"><span>Destination:</span><span class="node-val">./Downloads/ (Atomic)</span></div>
+              <div class="node-prop"><span>Collision Policy:</span><span class="node-val" style="color:var(--crypto-green)">No-Clobber Suffix</span></div>
+            </div>
+          </div>
+
+          <!-- Scenario Switcher Toolbar -->
+          <div class="scenario-toolbar">
+            <span class="scenario-label">Wire Test Scenarios:</span>
+            <div class="scenario-buttons" role="tablist">
+              <button class="btn-scenario active" id="btn-scen-1" onclick="loadScenario(1)" role="tab" aria-selected="true">
+                <span>1. Nominal Transfer (114 MB/s)</span>
               </button>
-              <button class="control-btn" onclick="resetSimulation()">Reset</button>
+              <button class="btn-scenario" id="btn-scen-2" onclick="loadScenario(2)" role="tab" aria-selected="false">
+                <span>2. No-Clobber Collision</span>
+              </button>
+              <button class="btn-scenario" id="btn-scen-3" onclick="loadScenario(3)" role="tab" aria-selected="false">
+                <span>3. Wrong PIN Abort</span>
+              </button>
+            </div>
+            <button class="btn-run-sim" onclick="replayActiveScenario()" title="Replay current scenario simulation">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              <span>Play Scenario</span>
+            </button>
+          </div>
+
+          <!-- Split Console Simulator -->
+          <div class="terminal-split">
+            <div class="terminal-pane" id="term-sender" aria-label="Sender Terminal Stream">
+              <span class="pane-tag tag-sender">Sender Terminal (Node Alpha)</span>
+              <div class="sim-content" id="sender-log"></div>
+            </div>
+            <div class="terminal-pane" id="term-receiver" aria-label="Receiver Terminal Stream">
+              <span class="pane-tag tag-receiver">Receiver Terminal (Node Beta)</span>
+              <div class="sim-content" id="receiver-log"></div>
             </div>
           </div>
 
-          <div class="terminals-grid">
-            <!-- Left Pane: Sender -->
-            <div class="terminal-pane pane-sender">
-              <div class="pane-header">
-                <span>Computer A (Sender)</span>
-                <span class="pane-badge badge-sender">wisp send</span>
+          <!-- Wire Protocol Stepper -->
+          <div class="protocol-stepper">
+            <div class="step-unit">
+              <div class="step-num">STEP 01</div>
+              <div class="step-name">mDNS Beacon (224.0.0.251)</div>
+            </div>
+            <div class="step-unit">
+              <div class="step-num">STEP 02</div>
+              <div class="step-name">Direct QUIC Stream Init</div>
+            </div>
+            <div class="step-unit">
+              <div class="step-num">STEP 03</div>
+              <div class="step-name">SPAKE2 Channel Exporter</div>
+            </div>
+            <div class="step-unit">
+              <div class="step-num">STEP 04</div>
+              <div class="step-name">Streaming BLAKE3 Payload</div>
+            </div>
+            <div class="step-unit">
+              <div class="step-num">STEP 05</div>
+              <div class="step-name">Cryptographic Receipt Commit</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- The 0-Hop vs 14-Hop Comparison Section -->
+    <section class="comparison-section" id="comparison">
+      <div class="container">
+        <span class="section-eyebrow">Physical Architecture</span>
+        <h2 class="section-title">The Path of a File: 0 Hops vs 14 Hops</h2>
+        <p class="section-subtitle">
+          Sending a file to the computer next to you shouldn't route through Virginia, Frankfurt, or a public relay server. Here is how Wisp physically differs from cloud and relay utilities.
+        </p>
+
+        <div class="routes-grid">
+          <!-- Cloud / Relay Route -->
+          <div class="route-card">
+            <div class="route-header">
+              <h3 class="route-name">Cloud & Relay Tools</h3>
+              <span class="route-badge badge-bad">14 External Hops</span>
+            </div>
+            <p style="font-size: 0.875rem; color: var(--text-secondary);">
+              Tools like Slack, WeTransfer, AirDrop (with iCloud), or Magic-Wormhole and croc relay servers depend on intermediate internet hosts:
+            </p>
+            <ul class="hop-list">
+              <li class="hop-item"><span>01.</span> Laptop Wi-Fi Adapter</li>
+              <li class="hop-item"><span>02.</span> Local Router / NAT Gateway</li>
+              <li class="hop-item external"><span>03.</span> ISP Optical Line Terminal (OLT)</li>
+              <li class="hop-item external"><span>04.</span> Regional Autonomous System (BGP)</li>
+              <li class="hop-item external"><span>05.</span> Transatlantic / Backbone Fiber</li>
+              <li class="hop-item external"><span>06.</span> Public Cloud Relay Server (AWS / GCP)</li>
+              <li class="hop-item external"><span>07.</span> Server Storage Buffer / Transit Buffer</li>
+              <li class="hop-item external"><span>08.</span> Return BGP Transit Route (7 hops back)</li>
+              <li class="hop-item"><span>14.</span> Destination Machine</li>
+            </ul>
+            <div class="hop-metric">
+              <div class="metric-box">
+                <span class="metric-label">OFFLINE CAPABLE</span>
+                <span class="metric-val" style="color: var(--danger-red)">NO</span>
               </div>
-              <div class="terminal-content" id="senderContent">
-                <div class="terminal-line visible" id="s-cmd-line">
-                  <span class="prompt-symbol">❯</span>
-                  <span class="cmd-text" id="s-cmd-text">wisp send dataset-2026.tar.gz</span>
-                </div>
-                <div class="terminal-line" id="s-line-1">
-                  <span class="dim-text">Discovery: broadcasting ephemeral mDNS beacon...</span>
-                </div>
-                <div class="terminal-line" id="s-line-2">
-                  <span class="dim-text">File:</span> <strong>dataset-2026.tar.gz</strong> (48.5 MB)
-                </div>
-                <div class="terminal-line" id="s-line-3">
-                  <span class="dim-text">Receive with:</span>
-                </div>
-                <div class="terminal-line" id="s-line-4">
-                  <span class="code-highlight">wisp recv 71429813-foster-gadget-beacon-prism</span>
-                </div>
-                <div class="terminal-line" id="s-line-5">
-                  <span class="dim-text">Peer connected: 192.168.1.55:54120 (QUIC TLS 1.3)</span>
-                </div>
-                <div class="terminal-line" id="s-line-6">
-                  <span class="dim-text">SPAKE2 authenticated with TLS channel binding ✔</span>
-                </div>
-                <div class="terminal-line" id="s-line-7">
-                  <div class="progress-bar-container">
-                    <div class="progress-bar-fill" id="senderProgress"></div>
-                  </div>
-                  <span class="dim-text" id="senderRate">Streaming...</span>
-                </div>
-                <div class="terminal-line" id="s-line-8">
-                  <span class="success-text">✔ Delivered and verified (BLAKE3 receipt signed)</span>
-                </div>
+              <div class="metric-box">
+                <span class="metric-label">TRANSFER SPEED</span>
+                <span class="metric-val">10 - 25 MB/s</span>
+              </div>
+              <div class="metric-box">
+                <span class="metric-label">SERVER LOGS</span>
+                <span class="metric-val" style="color: var(--danger-red)">EXPOSED</span>
               </div>
             </div>
+          </div>
 
-            <!-- Right Pane: Receiver -->
-            <div class="terminal-pane pane-receiver">
-              <div class="pane-header">
-                <span>Computer B (Receiver)</span>
-                <span class="pane-badge badge-receiver">wisp recv</span>
+          <!-- Wisp Route -->
+          <div class="route-card wisp-route">
+            <div class="route-header">
+              <h3 class="route-name">Wisp Protocol (WSP/2)</h3>
+              <span class="route-badge badge-good">0 External Hops</span>
+            </div>
+            <p style="font-size: 0.875rem; color: var(--text-secondary);">
+              Wisp operates strictly over physical radio frequencies and local copper. Packets never leave your local broadcast domain:
+            </p>
+            <ul class="hop-list">
+              <li class="hop-item local-only"><span>01.</span> Node Alpha (Sender NIC)</li>
+              <li class="hop-item local-only"><span>02.</span> Local Wi-Fi Access Point or Ethernet Switch</li>
+              <li class="hop-item local-only"><span>03.</span> Node Beta (Receiver NIC)</li>
+            </ul>
+            <div style="background: var(--crypto-green-dim); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: var(--radius-sm); padding: 12px; font-family: var(--font-mono); font-size: 0.75rem; color: var(--crypto-green);">
+              ✔ Zero internet egress. Disconnect the WAN cable or run in an underground lab — transfers proceed at full hardware link speed.
+            </div>
+            <div class="hop-metric">
+              <div class="metric-box">
+                <span class="metric-label">OFFLINE CAPABLE</span>
+                <span class="metric-val" style="color: var(--crypto-green)">100% YES</span>
               </div>
-              <div class="terminal-content" id="receiverContent">
-                <div class="terminal-line visible" id="r-cmd-line">
-                  <span class="prompt-symbol">❯</span>
-                  <span class="cmd-text" id="r-cmd-text">wisp recv 71429813-foster-gadget-beacon-prism --dir ~/Downloads</span>
-                </div>
-                <div class="terminal-line" id="r-line-1">
-                  <span class="dim-text">Discovery: listening for session 71429813...</span>
-                </div>
-                <div class="terminal-line" id="r-line-2">
-                  <span class="dim-text">Found peer at 192.168.1.42:51023 (14ms)</span>
-                </div>
-                <div class="terminal-line" id="r-line-3">
-                  <span class="dim-text">Performing mutual SPAKE2 key confirmation...</span>
-                </div>
-                <div class="terminal-line" id="r-line-4">
-                  <span class="dim-text">Incoming file:</span> <strong>dataset-2026.tar.gz</strong> (48.5 MB)
-                </div>
-                <div class="terminal-line" id="r-line-5">
-                  <div class="progress-bar-container">
-                    <div class="progress-bar-fill" id="receiverProgress"></div>
-                  </div>
-                  <span class="dim-text" id="receiverRate">Receiving...</span>
-                </div>
-                <div class="terminal-line" id="r-line-6">
-                  <span class="dim-text">BLAKE3 checksum: 8f4a1c72...09e8 verified ✔</span>
-                </div>
-                <div class="terminal-line" id="r-line-7">
-                  <span class="success-text">✔ Saved and verified: ~/Downloads/dataset-2026.tar.gz</span>
-                </div>
+              <div class="metric-box">
+                <span class="metric-label">TRANSFER SPEED</span>
+                <span class="metric-val" style="color: var(--crypto-green)">114+ MB/s</span>
+              </div>
+              <div class="metric-box">
+                <span class="metric-label">SERVER LOGS</span>
+                <span class="metric-val" style="color: var(--crypto-green)">ZERO</span>
               </div>
             </div>
           </div>
@@ -1525,681 +1451,386 @@
       </div>
     </section>
 
-    <!-- Features Section -->
-    <section class="features-section container" id="features">
-      <div class="section-title-wrapper">
-        <span class="section-pill">Engineered for Security & Speed</span>
-        <h2 class="section-heading">Peer-to-peer simplicity. Zero compromise.</h2>
-        <p class="section-subheading">Every detail of Wisp is built to guarantee wire-speed throughput without sacrificing privacy, memory safety, or cryptographic rigor.</p>
-      </div>
+    <!-- Installation & Binaries Section -->
+    <section class="install-section" id="install">
+      <div class="container">
+        <span class="section-eyebrow">Deployment & Distribution</span>
+        <h2 class="section-title">Ready in under three seconds.</h2>
+        <p class="section-subtitle">
+          Wisp is distributed as a single static binary with zero runtime dependencies. Install on both computers and send files immediately.
+        </p>
 
-      <div class="features-grid">
-        <!-- Feature 1 -->
-        <article class="feature-card">
-          <div class="card-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
-              <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
-              <line x1="6" y1="6" x2="6.01" y2="6"></line>
-              <line x1="6" y1="18" x2="6.01" y2="18"></line>
-            </svg>
-          </div>
-          <h3 class="card-title">Pure LAN P2P (Zero Cloud)</h3>
-          <p class="card-desc">Transfers flow directly over local UDP QUIC sockets. No middleman, no telemetry, no cloud relays, no bandwidth throttling. Saturates full 1GbE and 10GbE local links.</p>
-        </article>
+        <!-- Tab Controls -->
+        <div class="tab-nav" role="tablist">
+          <button class="tab-trigger active" id="tab-btn-script" onclick="switchInstallTab('script')" role="tab" aria-selected="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+            <span>One-Line Script (Recommended)</span>
+          </button>
+          <button class="tab-trigger" id="tab-btn-binaries" onclick="switchInstallTab('binaries')" role="tab" aria-selected="false">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>Standalone Binaries (v0.2.0)</span>
+          </button>
+          <button class="tab-trigger" id="tab-btn-cargo" onclick="switchInstallTab('cargo')" role="tab" aria-selected="false">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>
+            <span>Cargo (Rust Source)</span>
+          </button>
+        </div>
 
-        <!-- Feature 2 -->
-        <article class="feature-card">
-          <div class="card-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-            </svg>
-          </div>
-          <h3 class="card-title">SPAKE2 Authentication</h3>
-          <p class="card-desc">Single-use PINs with four human-friendly words. Authenticated key exchange bound directly to TLS 1.3 channel exporters. Zero exposure to offline dictionary attacks.</p>
-        </article>
-
-        <!-- Feature 3 -->
-        <article class="feature-card">
-          <div class="card-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-              <polyline points="9 12 11 14 15 10"></polyline>
-            </svg>
-          </div>
-          <h3 class="card-title">BLAKE3 Cryptographic Receipts</h3>
-          <p class="card-desc">End-to-end streaming integrity hash computed on the fly. The receiving peer verifies the entire payload and returns an authenticated cryptographic delivery receipt.</p>
-        </article>
-
-        <!-- Feature 4 -->
-        <article class="feature-card">
-          <div class="card-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-            </svg>
-          </div>
-          <h3 class="card-title">Atomic No-Clobber Storage</h3>
-          <p class="card-desc">Files are written to temporary hidden parts and renamed atomically upon verification. Existing files are preserved automatically (<code>file (1).ext</code>). Interrupted transfers leave zero residue.</p>
-        </article>
-
-        <!-- Feature 5 -->
-        <article class="feature-card">
-          <div class="card-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-            </svg>
-          </div>
-          <h3 class="card-title">100% Safe Rust Core</h3>
-          <p class="card-desc">Built with <code>#![forbid(unsafe_code)]</code> across all crates. Zero unsafe memory manipulation, zero Clippy warnings, audited against concurrent races and panic vectors.</p>
-        </article>
-
-        <!-- Feature 6 -->
-        <article class="feature-card">
-          <div class="card-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-              <line x1="8" y1="21" x2="16" y2="21"></line>
-              <line x1="12" y1="17" x2="12" y2="21"></line>
-            </svg>
-          </div>
-          <h3 class="card-title">True Cross-Platform</h3>
-          <p class="card-desc">Tested continuously across Linux (x86_64, aarch64), macOS (Apple Silicon, Intel), and Windows. Single static binary with zero external runtime dependencies.</p>
-        </article>
-      </div>
-
-      <!-- Architecture Showcase Banner -->
-      <div class="arch-banner">
-        <div class="arch-content">
-          <span class="arch-badge">WSP/2 Architecture</span>
-          <h3 class="arch-heading">Inspect the Full Interactive Architecture</h3>
-          <p class="arch-desc">
-            Explore our standalone, validated system architecture diagram. Trace packet motion across all 5 protocol stages: Ephemeral mDNS discovery, QUIC TLS 1.3 handshake, SPAKE2 key confirmation, streaming BLAKE3 verification, and atomic storage receipts.
+        <!-- Tab 1: One-Line Script -->
+        <div class="tab-content active" id="tab-content-script" role="tabpanel">
+          <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 8px;">
+            <strong>Linux & macOS</strong> (x86_64, ARM64 / Apple Silicon):
           </p>
-          <div class="arch-actions">
-            <a href="architecture/wisp-architecture.html" class="btn-primary">
-              <span>Open Architecture Explorer</span>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="7" y1="17" x2="17" y2="7"></line>
-                <polyline points="7 7 17 7 17 17"></polyline>
-              </svg>
-            </a>
-            <a href="https://github.com/YohannHommet/wisp/blob/develop/docs/THREAT_MODEL.md" target="_blank" rel="noopener noreferrer" class="btn-secondary">
-              <span>Threat Model & Audit Report</span>
-            </a>
-          </div>
-        </div>
-
-        <div class="arch-preview-card" aria-hidden="true">
-          <div class="flow-step">
-            <div class="flow-num">1</div>
-            <div><strong>Discovery:</strong> mDNS UDP Multicast</div>
-          </div>
-          <div class="flow-step">
-            <div class="flow-num">2</div>
-            <div><strong>Transport:</strong> Quinn QUIC TLS 1.3</div>
-          </div>
-          <div class="flow-step">
-            <div class="flow-num">3</div>
-            <div><strong>Auth:</strong> SPAKE2 Channel Exporter</div>
-          </div>
-          <div class="flow-step">
-            <div class="flow-num">4</div>
-            <div><strong>Stream:</strong> Zero-Copy BLAKE3 Wire</div>
-          </div>
-          <div class="flow-step">
-            <div class="flow-num">5</div>
-            <div><strong>Receipt:</strong> Atomic Sync & Persistence</div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Installation Section -->
-    <section class="install-section container" id="install">
-      <div class="section-title-wrapper">
-        <span class="section-pill">Installation & Setup</span>
-        <h2 class="section-heading">Ready in under thirty seconds.</h2>
-        <p class="section-subheading">Choose your preferred installation method. Install on both sending and receiving machines.</p>
-      </div>
-
-      <div class="tabs-container">
-        <div class="tabs-nav" role="tablist">
-          <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-script" id="btn-tab-script" onclick="switchTab('script')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="4 17 10 11 4 5"></polyline>
-              <line x1="12" y1="19" x2="20" y2="19"></line>
-            </svg>
-            <span>One-Line Script</span>
-          </button>
-          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-binaries" id="btn-tab-binaries" onclick="switchTab('binaries')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="7 10 12 15 17 10"></polyline>
-              <line x1="12" y1="15" x2="12" y2="3"></line>
-            </svg>
-            <span>Standalone Binaries</span>
-          </button>
-          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-cargo" id="btn-tab-cargo" onclick="switchTab('cargo')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
-            </svg>
-            <span>Cargo (Rust)</span>
-          </button>
-          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-source" id="btn-tab-source" onclick="switchTab('source')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="4"></circle>
-              <line x1="1.05" y1="12" x2="7" y2="12"></line>
-              <line x1="17.01" y1="12" x2="22.96" y2="12"></line>
-            </svg>
-            <span>From Source</span>
-          </button>
-        </div>
-
-        <!-- Tab 1: Script (Default) -->
-        <div class="tab-pane active" id="tab-script" role="tabpanel" aria-labelledby="btn-tab-script">
-          <p class="pane-description" style="margin-bottom: 12px;"><strong>Linux & macOS:</strong> One-line checksum-verified installer:</p>
-          <div class="code-box">
+          <div class="code-display">
             <code>curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash</code>
-            <button class="code-copy-btn" onclick="copySnippet('curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash', this)">Copy</button>
+            <button class="btn-copy-code" onclick="copyText('curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash', this)">Copy</button>
           </div>
-          <p class="pane-description" style="margin-bottom: 12px;"><strong>Windows PowerShell:</strong></p>
-          <div class="code-box">
+
+          <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 8px;">
+            <strong>Windows PowerShell</strong> (x64):
+          </p>
+          <div class="code-display">
             <code>irm https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.ps1 | iex</code>
-            <button class="code-copy-btn" onclick="copySnippet('irm https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.ps1 | iex', this)">Copy</button>
+            <button class="btn-copy-code" onclick="copyText('irm https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.ps1 | iex', this)">Copy</button>
           </div>
-          <p class="pane-description">Downloads the latest release asset for your platform, verifies SHA-256 against <code>SHA256SUMS</code>, and atomically installs to <code>~/.local/bin/wisp</code> or <code>%LOCALAPPDATA%\Wisp\bin\wisp.exe</code>.</p>
+
+          <p style="font-size: 0.8125rem; color: var(--text-muted);">
+            Installs into user space (<code>~/.local/bin/wisp</code> or <code>%LOCALAPPDATA%\Wisp\bin\wisp.exe</code>). Never requires root or administrator privileges. Verifies SHA-256 against <code>SHA256SUMS</code> before staging and replaces the binary atomically.
+          </p>
         </div>
 
         <!-- Tab 2: Standalone Binaries -->
-        <div class="tab-pane" id="tab-binaries" role="tabpanel" aria-labelledby="btn-tab-binaries">
-          <p class="pane-description" style="margin-bottom: 12px;">Directly download precompiled standalone binaries for <strong>Wisp v0.2.0</strong>:</p>
-          <div class="binary-download-grid">
-            <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/wisp-linux-amd64" class="binary-card">
-              <div class="binary-card-meta">
-                <span class="binary-name">Linux x86_64</span>
-                <span class="binary-tag">Static musl · 5.2 MB</span>
+        <div class="tab-content" id="tab-content-binaries" role="tabpanel">
+          <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 16px;">
+            Download precompiled native binaries for <strong>Wisp v0.2.0</strong>:
+          </p>
+          <div class="binaries-grid">
+            <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/wisp-linux-amd64" class="binary-tile" download>
+              <div class="tile-info">
+                <span class="tile-name">Linux x86_64</span>
+                <span class="tile-spec">Static musl · 5.2 MB</span>
               </div>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <svg class="tile-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
             </a>
-            <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/wisp-linux-arm64" class="binary-card">
-              <div class="binary-card-meta">
-                <span class="binary-name">Linux ARM64</span>
-                <span class="binary-tag">Static musl · 4.4 MB</span>
+
+            <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/wisp-linux-arm64" class="binary-tile" download>
+              <div class="tile-info">
+                <span class="tile-name">Linux ARM64</span>
+                <span class="tile-spec">Static musl · 4.4 MB</span>
               </div>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <svg class="tile-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
             </a>
-            <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/wisp-macos-universal" class="binary-card">
-              <div class="binary-card-meta">
-                <span class="binary-name">macOS Universal</span>
-                <span class="binary-tag">Apple Silicon + Intel · 8.4 MB</span>
+
+            <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/wisp-macos-universal" class="binary-tile" download>
+              <div class="tile-info">
+                <span class="tile-name">macOS Universal</span>
+                <span class="tile-spec">Apple Silicon + Intel · 8.4 MB</span>
               </div>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <svg class="tile-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
             </a>
-            <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/wisp-windows-amd64.exe" class="binary-card">
-              <div class="binary-card-meta">
-                <span class="binary-name">Windows x64 (.exe)</span>
-                <span class="binary-tag">Native MSVC · 5.2 MB</span>
+
+            <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/wisp-windows-amd64.exe" class="binary-tile" download>
+              <div class="tile-info">
+                <span class="tile-name">Windows x64 (.exe)</span>
+                <span class="tile-spec">Native MSVC · 5.2 MB</span>
               </div>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <svg class="tile-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
             </a>
           </div>
-          <p class="pane-description" style="margin-top: 14px; font-size: 0.8125rem;">
-            Verify with <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/SHA256SUMS" target="_blank" rel="noopener" style="color: var(--cyan-400); text-decoration: underline;">SHA256SUMS</a>. View full release details on <a href="https://github.com/YohannHommet/wisp/releases/tag/v0.2.0" target="_blank" rel="noopener" style="color: var(--cyan-400); text-decoration: underline;">GitHub Releases</a>.
+          <p style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted); margin-top: 16px;">
+            Condensats officiels : <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/SHA256SUMS" target="_blank" rel="noopener" style="color: var(--signal-copper); text-decoration: underline;">SHA256SUMS</a> · Détails complets sur <a href="https://github.com/YohannHommet/wisp/releases/tag/v0.2.0" target="_blank" rel="noopener" style="color: var(--signal-copper); text-decoration: underline;">GitHub Releases</a>.
           </p>
         </div>
 
         <!-- Tab 3: Cargo -->
-        <div class="tab-pane" id="tab-cargo" role="tabpanel" aria-labelledby="btn-tab-cargo">
-          <p class="pane-description" style="margin-bottom: 12px;">Install directly from this repository checkout using standard Rust toolchain:</p>
-          <div class="code-box">
-            <code>cargo install --locked --path crates/wisp-cli<br>wisp --version</code>
-            <button class="code-copy-btn" onclick="copySnippet('cargo install --locked --path crates/wisp-cli\nwisp --version', this)">Copy</button>
+        <div class="tab-content" id="tab-content-cargo" role="tabpanel">
+          <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 8px;">
+            Compile and install from this git checkout:
+          </p>
+          <div class="code-display">
+            <code>cargo install --locked --path crates/wisp-cli</code>
+            <button class="btn-copy-code" onclick="copyText('cargo install --locked --path crates/wisp-cli', this)">Copy</button>
           </div>
-          <p class="pane-description">Requires Rust 1.88.0 or newer. Compiles optimized native binary directly into your <code>~/.cargo/bin</code> path.</p>
-        </div>
-
-        <!-- Tab 4: Source -->
-        <div class="tab-pane" id="tab-source" role="tabpanel" aria-labelledby="btn-tab-source">
-          <p class="pane-description" style="margin-bottom: 12px;">Clone and build locally with test validation:</p>
-          <div class="code-box">
-            <code>git clone https://github.com/YohannHommet/wisp.git<br>cd wisp<br>make build<br>make test</code>
-            <button class="code-copy-btn" onclick="copySnippet('git clone https://github.com/YohannHommet/wisp.git && cd wisp && make build && make test', this)">Copy</button>
-          </div>
-          <p class="pane-description">Includes the 7 automated end-to-end scenarios with <code>make demo</code> and interactive TMUX split-screen with <code>make demo-tmux</code>.</p>
+          <p style="font-size: 0.8125rem; color: var(--text-muted);">
+            Requires Rust 1.88+. Installs the optimized <code>wisp</code> binary to <code>$CARGO_HOME/bin</code>.
+          </p>
         </div>
       </div>
+    </section>
 
-      <!-- CLI Reference Cheatsheet -->
-      <div class="cli-table-wrapper" id="cheatsheet">
-        <table class="cli-table">
-          <thead>
-            <tr>
-              <th>Task / Requirement</th>
-              <th>Command & Options</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Send a file</td>
-              <td><code>wisp send photo.jpg</code></td>
-            </tr>
-            <tr>
-              <td>Receive a file</td>
-              <td><code>wisp recv CODE --dir ~/Downloads</code></td>
-            </tr>
-            <tr>
-              <td>Bypass mDNS (manual IP)</td>
-              <td><code>wisp recv CODE --address 192.168.1.42:51023</code></td>
-            </tr>
-            <tr>
-              <td>Reject oversized files</td>
-              <td><code>wisp recv CODE --max-size 500MiB</code></td>
-            </tr>
-            <tr>
-              <td>Rename file on transfer</td>
-              <td><code>wisp send report.pdf --name "Final Report.pdf"</code></td>
-            </tr>
-            <tr>
-              <td>Machine-readable output</td>
-              <td><code>wisp recv CODE --json</code></td>
-            </tr>
-          </tbody>
-        </table>
+    <!-- Protocol Specifications & Security Invariants -->
+    <section class="specs-section" id="specifications">
+      <div class="container">
+        <span class="section-eyebrow">Cryptographic Invariants</span>
+        <h2 class="section-title">Engineered to fail closed.</h2>
+        <p class="section-subtitle">
+          Wisp enforces strict protocol guarantees audited against adversarial LAN attacks, port scans, and malicious network payloads.
+        </p>
+
+        <div class="specs-grid">
+          <!-- Card 1 -->
+          <div class="spec-card">
+            <div class="spec-header">
+              <span class="spec-num">01</span>
+              <h3 class="spec-title">SPAKE2 Channel Binding</h3>
+            </div>
+            <p class="spec-text">
+              Untrusted self-signed TLS 1.3 certificates are cryptographically bound to the SPAKE2 PAKE key confirmation MAC. Even an active attacker with full ARP spoofing capability on an unencrypted Wi-Fi network cannot mount a Man-in-the-Middle attack without knowing the 4-word code.
+            </p>
+          </div>
+
+          <!-- Card 2 -->
+          <div class="spec-card">
+            <div class="spec-header">
+              <span class="spec-num">02</span>
+              <h3 class="spec-title">BLAKE3 Cryptographic Receipts</h3>
+            </div>
+            <p class="spec-text">
+              Payload integrity is verified on the fly using streaming BLAKE3 hashes. The sender only exits with success code 0 once the receiving peer has verified the digest and returned an authenticated cryptographic delivery receipt over the encrypted QUIC stream.
+            </p>
+          </div>
+
+          <!-- Card 3 -->
+          <div class="spec-card">
+            <div class="spec-header">
+              <span class="spec-num">03</span>
+              <h3 class="spec-title">Atomic No-Clobber Persistence</h3>
+            </div>
+            <p class="spec-text">
+              Files are written into temporary hidden staging files (<code>.wisp-*.part</code>) and atomically committed to disk upon checksum verification. If a file with the same name exists, it is never overwritten: Wisp automatically suffixes to <code>file (1).ext</code>. Cancelled transfers leave zero residue.
+            </p>
+          </div>
+
+          <!-- Card 4 -->
+          <div class="spec-card">
+            <div class="spec-header">
+              <span class="spec-num">04</span>
+              <h3 class="spec-title">100% Safe Rust Core</h3>
+            </div>
+            <p class="spec-text">
+              <code>#![forbid(unsafe_code)]</code> is strictly enforced across the entire workspace. All memory buffers, socket channels, and cryptographic states are protected by Rust's ownership model with zero raw pointer dereferences or unsafe memory blocks.
+            </p>
+          </div>
+        </div>
+
+        <!-- Deep Link to Archify -->
+        <div class="arch-banner">
+          <div class="arch-text">
+            <h3 class="arch-title">Inspect the WSP/2 Protocol Specification</h3>
+            <p class="arch-sub">
+              Explore the interactive sequence diagrams, trust boundary topologies, and cryptographic message flows in our standalone architecture explorer.
+            </p>
+          </div>
+          <a href="architecture/wisp-architecture.html" class="btn-action-primary">
+            <span>Open Architecture Diagram</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+              <polyline points="12 5 19 12 12 19"></polyline>
+            </svg>
+          </a>
+        </div>
       </div>
     </section>
   </main>
 
   <!-- Footer -->
-  <footer class="site-footer" role="contentinfo">
-    <div class="container">
-      <div class="footer-grid">
-        <div class="footer-brand">
-          <div class="brand-group">
-            <div class="logo-mark" aria-hidden="true">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-              </svg>
-            </div>
-            <span class="brand-name">Wisp</span>
-          </div>
-          <p>Zero-cloud, cryptographically verified peer-to-peer LAN file transfers in 100% safe Rust.</p>
-        </div>
-
-        <div class="footer-col">
-          <h4>Documentation</h4>
-          <ul>
-            <li><a href="https://github.com/YohannHommet/wisp/blob/develop/docs/USER_GUIDE.md">User Guide</a></li>
-            <li><a href="architecture/wisp-architecture.html">Architecture Diagram</a></li>
-            <li><a href="https://github.com/YohannHommet/wisp/blob/develop/docs/THREAT_MODEL.md">Threat Model</a></li>
-            <li><a href="https://github.com/YohannHommet/wisp/blob/develop/docs/ADVERSARIAL_AUDIT_REPORT.md">Security Audit</a></li>
-          </ul>
-        </div>
-
-        <div class="footer-col">
-          <h4>Project</h4>
-          <ul>
-            <li><a href="https://github.com/YohannHommet/wisp">GitHub Repository</a></li>
-            <li><a href="https://github.com/YohannHommet/wisp/releases">Releases</a></li>
-            <li><a href="https://github.com/YohannHommet/wisp/blob/develop/CHANGELOG.md">Changelog</a></li>
-            <li><a href="https://github.com/YohannHommet/wisp/blob/develop/LICENSE">MIT License</a></li>
-          </ul>
-        </div>
-
-        <div class="footer-col">
-          <h4>Security</h4>
-          <ul>
-            <li><span style="color: var(--emerald-400); font-weight: 600;">#&#33;[forbid(unsafe_code)]</span></li>
-            <li><span>SPAKE2 RFC 9382</span></li>
-            <li><span>BLAKE3 Integrity</span></li>
-            <li><span>Quinn QUIC TLS 1.3</span></li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="footer-bottom">
-        <div>&copy; 2026 Yohann Hommet. Released under the MIT License.</div>
-        <div style="font-family: var(--font-mono); font-size: 0.75rem;">WSP/2 Protocol · Verified Matrix CI</div>
-      </div>
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span>Wisp 0.2 · Apache 2.0 License · Built by Yohann Hommet</span>
+      <ul class="footer-links">
+        <li><a href="https://github.com/YohannHommet/wisp">GitHub</a></li>
+        <li><a href="https://github.com/YohannHommet/wisp/blob/develop/docs/THREAT_MODEL.md">Threat Model</a></li>
+        <li><a href="https://github.com/YohannHommet/wisp/blob/develop/docs/USER_GUIDE.md">User Guide</a></li>
+        <li><a href="architecture/wisp-architecture.html">Architecture</a></li>
+      </ul>
     </div>
   </footer>
 
-  <!-- Script for Interactivity -->
   <script>
-    // Theme Management
-    const themeToggleBtn = document.getElementById('themeToggle');
-    const htmlEl = document.documentElement;
-
-    themeToggleBtn.addEventListener('click', () => {
-      const currentTheme = htmlEl.getAttribute('data-theme');
-      const targetTheme = currentTheme === 'dark' ? 'light' : 'dark';
-      htmlEl.setAttribute('data-theme', targetTheme);
-      localStorage.setItem('wisp-theme', targetTheme);
-    });
-
-    // Restore user theme preference
-    const savedTheme = localStorage.getItem('wisp-theme');
-    if (savedTheme) {
-      htmlEl.setAttribute('data-theme', savedTheme);
-    } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
-      htmlEl.setAttribute('data-theme', 'light');
+    // Theme Switcher (Dark Telemetry / Light Technical Drafting)
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('wisp-theme', next);
     }
 
-    // Mobile Menu Drawer
-    const mobileMenuBtn = document.getElementById('mobileMenuBtn');
-    const mobileDrawer = document.getElementById('mobileDrawer');
-
-    if (mobileMenuBtn && mobileDrawer) {
-      mobileMenuBtn.addEventListener('click', () => {
-        const isOpen = mobileDrawer.classList.contains('open');
-        mobileDrawer.classList.toggle('open', !isOpen);
-        mobileMenuBtn.setAttribute('aria-expanded', !isOpen);
-      });
-    }
-
-    function closeMobileMenu() {
-      if (mobileDrawer) {
-        mobileDrawer.classList.remove('open');
-        if (mobileMenuBtn) mobileMenuBtn.setAttribute('aria-expanded', 'false');
+    (function initTheme() {
+      const saved = localStorage.getItem('wisp-theme');
+      if (saved) {
+        document.documentElement.setAttribute('data-theme', saved);
+      } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+        document.documentElement.setAttribute('data-theme', 'light');
       }
+    })();
+
+    // Copy Snippet Helper
+    function copyText(str, btn) {
+      navigator.clipboard.writeText(str).then(() => {
+        const original = btn.innerHTML;
+        btn.innerHTML = '✔ Copied';
+        btn.style.color = 'var(--crypto-green)';
+        setTimeout(() => {
+          btn.innerHTML = original;
+          btn.style.color = '';
+        }, 1800);
+      });
     }
 
-    // Tabs Switcher
-    function switchTab(tabId) {
-      document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.classList.remove('active');
-        btn.setAttribute('aria-selected', 'false');
+    // Install Tab Switcher
+    function switchInstallTab(id) {
+      document.querySelectorAll('.tab-trigger').forEach(b => {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
       });
-      document.querySelectorAll('.tab-pane').forEach(pane => {
-        pane.classList.remove('active');
-      });
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
 
-      const activeBtn = document.getElementById(`btn-tab-${tabId}`);
-      const activePane = document.getElementById(`tab-${tabId}`);
-      if (activeBtn && activePane) {
+      const activeBtn = document.getElementById(`tab-btn-${id}`);
+      const activeContent = document.getElementById(`tab-content-${id}`);
+      if (activeBtn && activeContent) {
         activeBtn.classList.add('active');
         activeBtn.setAttribute('aria-selected', 'true');
-        activePane.classList.add('active');
+        activeContent.classList.add('active');
       }
     }
 
-    // Copy to Clipboard with Visual Feedback
-    function copySnippet(text, btnElement) {
-      navigator.clipboard.writeText(text).then(() => {
-        const originalContent = btnElement.innerHTML;
-        btnElement.innerHTML = `
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--emerald-400)">
-            <polyline points="20 6 9 17 4 12"></polyline>
-          </svg>
-          <span style="color: var(--emerald-400)">Copied!</span>
-        `;
-        setTimeout(() => {
-          btnElement.innerHTML = originalContent;
-        }, 2000);
-      });
-    }
+    // ==========================================================================
+    // Interactive LAN Wire Scenario Simulator
+    // ==========================================================================
+    let currentScenario = 1;
+    let animationTimer = null;
 
-    // Dual-Terminal Live Simulation Animation (3 Scenarios)
-    let simTimer = null;
-    let simStep = 0;
-    let simProgress = 0;
-    let isRunning = false;
-    let activeScenario = 'nominal';
-
-    const scenarioData = {
-      nominal: {
-        senderCmd: 'wisp send dataset-2026.tar.gz',
-        receiverCmd: 'wisp recv 71429813-foster-gadget-beacon-prism --dir ~/Downloads',
-        senderLines: [
-          '<span class="dim-text">Discovery: broadcasting ephemeral mDNS beacon...</span>',
-          '<span class="dim-text">File:</span> <strong>dataset-2026.tar.gz</strong> (48.5 MB)',
-          '<span class="dim-text">Receive with:</span>',
-          '<span class="code-highlight">wisp recv 71429813-foster-gadget-beacon-prism</span>',
-          '<span class="dim-text">Peer connected: 192.168.1.55:54120 (QUIC TLS 1.3)</span>',
-          '<span class="dim-text">SPAKE2 authenticated with TLS channel binding ✔</span>',
-          'PROGRESS',
-          '<span class="success-text">✔ Delivered and verified (BLAKE3 receipt signed)</span>'
+    const scenarios = {
+      1: {
+        name: "Nominal Transfer",
+        status: "Quinn QUIC / TLS 1.3 · 114 MB/s",
+        sender: [
+          { text: "$ wisp send report.pdf", type: "cmd", delay: 100 },
+          { text: "mDNS service announced on UDP 5353...", type: "dim", delay: 300 },
+          { text: "Listening on 192.168.1.42:44833", type: "dim", delay: 500 },
+          { text: "Receiver command:", type: "dim", delay: 700 },
+          { text: "wisp recv 68770468-solar-flint-stellar-thistle", type: "code", delay: 900 },
+          { text: "Peer connected from 192.168.1.88:52104", type: "dim", delay: 1500 },
+          { text: "SPAKE2 key confirmation verified (Channel Exporter MAC match)", type: "ok", delay: 2000 },
+          { text: "Streaming report.pdf (24.8 MB) [████████████████████] 100%", type: "progress", delay: 2600 },
+          { text: "Receipt received: blake3:e3b0c44298fc1c149afbf4c8996fb924", type: "dim", delay: 3100 },
+          { text: "✔ Delivered and verified: report.pdf (26,004,688 bytes)", type: "ok", delay: 3300 }
         ],
-        receiverLines: [
-          '<span class="dim-text">Discovery: listening for session 71429813...</span>',
-          '<span class="dim-text">Found peer at 192.168.1.42:51023 (14ms)</span>',
-          '<span class="dim-text">Performing mutual SPAKE2 key confirmation...</span>',
-          '<span class="dim-text">Incoming file:</span> <strong>dataset-2026.tar.gz</strong> (48.5 MB)',
-          'PROGRESS',
-          '<span class="dim-text">BLAKE3 checksum: 8f4a1c72...09e8 verified ✔</span>',
-          '<span class="success-text">✔ Saved and verified: ~/Downloads/dataset-2026.tar.gz</span>'
+        receiver: [
+          { text: "$ wisp recv 68770468-solar-flint-stellar-thistle --dir ~/Downloads", type: "cmd", delay: 1100 },
+          { text: "Discovered sender via mDNS at 192.168.1.42:44833", type: "dim", delay: 1400 },
+          { text: "Connected via QUIC (TLS 1.3 / Ring engine)", type: "dim", delay: 1700 },
+          { text: "Verifying SPAKE2 pairing code...", type: "dim", delay: 2100 },
+          { text: "Saving: report.pdf (24.8 MB) [████████████████████] 100% (114 MB/s)", type: "progress", delay: 2700 },
+          { text: "Verifying streaming BLAKE3 integrity hash...", type: "dim", delay: 3000 },
+          { text: "✔ Saved and verified: ~/Downloads/report.pdf", type: "ok", delay: 3200 }
         ]
       },
-      noclobber: {
-        senderCmd: 'wisp send report.pdf',
-        receiverCmd: 'wisp recv 94812371-amber-valley-timber-quartz --dir ~/Documents',
-        senderLines: [
-          '<span class="dim-text">Discovery: broadcasting ephemeral mDNS beacon...</span>',
-          '<span class="dim-text">File:</span> <strong>report.pdf</strong> (1.4 MB)',
-          '<span class="dim-text">Receive with:</span>',
-          '<span class="code-highlight">wisp recv 94812371-amber-valley-timber-quartz</span>',
-          '<span class="dim-text">Peer connected: 192.168.1.80:50112 (QUIC TLS 1.3)</span>',
-          '<span class="dim-text">SPAKE2 authenticated with TLS channel binding ✔</span>',
-          'PROGRESS',
-          '<span class="success-text">✔ Delivered and verified: report (1).pdf</span>'
+      2: {
+        name: "No-Clobber Collision",
+        status: "Atomic Rename · Suffix (1)",
+        sender: [
+          { text: "$ wisp send report.pdf", type: "cmd", delay: 100 },
+          { text: "Listening on 192.168.1.42:44833 with code: 49201844-cedar-river-stone-ember", type: "code", delay: 400 },
+          { text: "Peer connected. Exchanging credentials...", type: "dim", delay: 1000 },
+          { text: "Streaming 24.8 MB payload at wire speed...", type: "progress", delay: 1600 },
+          { text: "Receipt confirmed delivery under collision policy", type: "dim", delay: 2200 },
+          { text: "✔ Delivered: report.pdf (saved by peer as report (1).pdf)", type: "ok", delay: 2500 }
         ],
-        receiverLines: [
-          '<span class="dim-text">Discovery: listening for session 94812371...</span>',
-          '<span class="dim-text">Found peer at 192.168.1.42:50881 (8ms)</span>',
-          '<span class="dim-text">Performing mutual SPAKE2 key confirmation...</span>',
-          '<span style="color: #fbbf24;">Destination collision: report.pdf exists. Engaging no-clobber protection.</span>',
-          'PROGRESS',
-          '<span class="dim-text">BLAKE3 checksum: 3d18ba99...44a1 verified ✔</span>',
-          '<span class="success-text">✔ Saved as: ~/Documents/report (1).pdf (original preserved)</span>'
+        receiver: [
+          { text: "$ wisp recv 49201844-cedar-river-stone-ember --dir ~/Downloads", type: "cmd", delay: 600 },
+          { text: "Connecting to 192.168.1.42:44833...", type: "dim", delay: 900 },
+          { text: "SPAKE2 authenticated.", type: "ok", delay: 1300 },
+          { text: "⚠ Notice: '~/Downloads/report.pdf' already exists (No-Clobber)", type: "dim", delay: 1800 },
+          { text: "Staging incoming file to .wisp-tmp.part...", type: "dim", delay: 2000 },
+          { text: "BLAKE3 hash verified. Atomically committing...", type: "dim", delay: 2300 },
+          { text: "✔ Original preserved. Saved: ~/Downloads/report (1).pdf", type: "ok", delay: 2600 }
         ]
       },
-      wrongpin: {
-        senderCmd: 'wisp send confidential-keys.kdbx',
-        receiverCmd: 'wisp recv 38104719-harbor-random-wrong-words',
-        senderLines: [
-          '<span class="dim-text">Discovery: broadcasting ephemeral mDNS beacon...</span>',
-          '<span class="dim-text">File:</span> <strong>confidential-keys.kdbx</strong> (820 KB)',
-          '<span class="dim-text">Receive with:</span>',
-          '<span class="code-highlight">wisp recv 38104719-harbor-glacier-falcon-summit</span>',
-          '<span class="dim-text">Peer connected: 192.168.1.199:58231 (QUIC TLS 1.3)</span>',
-          '<span style="color: #ef4444; font-weight: 700;">✘ SPAKE2 authentication failed: confirmation MAC mismatch!</span>',
-          '<span style="color: #fbbf24;">Session permanently terminated. One-attempt limit enforced (zero leak).</span>',
-          '<span class="dim-text">Sender exiting: security error code 2.</span>'
+      3: {
+        name: "Adversarial Wrong PIN Abort",
+        status: "MAC Mismatch · Session Terminated",
+        sender: [
+          { text: "$ wisp send secret.docx", type: "cmd", delay: 100 },
+          { text: "Listening with code: 92847192-falcon-hazel-timber-orbit", type: "code", delay: 400 },
+          { text: "Unauthorized probe from 192.168.1.105 attempting handshake", type: "dim", delay: 1000 },
+          { text: "✘ PAKE key confirmation failed (MAC mismatch)", type: "err", delay: 1400 },
+          { text: "Strict anti-bruteforce: closing QUIC socket immediately", type: "err", delay: 1700 },
+          { text: "Session terminated. Code burned. Zero oracle leaks.", type: "dim", delay: 2000 }
         ],
-        receiverLines: [
-          '<span class="dim-text">Discovery: listening for session 38104719...</span>',
-          '<span class="dim-text">Found peer at 192.168.1.42:51900</span>',
-          '<span class="dim-text">Attempting SPAKE2 key confirmation with candidate words...</span>',
-          '<span style="color: #ef4444; font-weight: 700;">✘ Key confirmation rejected by sender!</span>',
-          '<span class="dim-text">Connection dropped by peer. Zero bytes transferred.</span>',
-          '<span class="dim-text">Temporary file dropped: zero disk residue.</span>',
-          '<span style="color: #ef4444;">✘ Transfer aborted: authentication rejected.</span>'
+        receiver: [
+          { text: "$ wisp recv 92847192-WRONG-PIN-ATTACK-VECTOR", type: "cmd", delay: 700 },
+          { text: "Connecting to 192.168.1.42:44833...", type: "dim", delay: 900 },
+          { text: "Sending invalid key exchange tokens...", type: "dim", delay: 1200 },
+          { text: "✘ Error: Authentication rejected by peer (Code mismatch)", type: "err", delay: 1500 },
+          { text: "Connection closed. 0 bytes written to disk.", type: "err", delay: 1800 }
         ]
       }
     };
 
-    function changeScenario(scenarioId) {
-      if (scenarioData[scenarioId]) {
-        activeScenario = scenarioId;
-        resetSimulation();
-        updateScenarioContent();
-        toggleSimulation();
-      }
-    }
-
-    function updateScenarioContent() {
-      const data = scenarioData[activeScenario];
-      document.getElementById('s-cmd-text').textContent = data.senderCmd;
-      document.getElementById('r-cmd-text').textContent = data.receiverCmd;
-
-      // Update lines
-      for (let i = 1; i <= 8; i++) {
-        const sEl = document.getElementById(`s-line-${i}`);
-        if (sEl && data.senderLines[i - 1] !== 'PROGRESS') {
-          sEl.innerHTML = data.senderLines[i - 1] || '';
-        }
-      }
-      for (let j = 1; j <= 7; j++) {
-        const rEl = document.getElementById(`r-line-${j}`);
-        if (rEl && data.receiverLines[j - 1] !== 'PROGRESS') {
-          rEl.innerHTML = data.receiverLines[j - 1] || '';
-        }
-      }
-    }
-
-    function resetSimulation() {
-      clearTimeout(simTimer);
-      isRunning = false;
-      simStep = 0;
-      simProgress = 0;
-
-      for (let i = 1; i <= 8; i++) {
-        const el = document.getElementById(`s-line-${i}`);
-        if (el) el.classList.remove('visible');
-      }
-      for (let j = 1; j <= 7; j++) {
-        const el = document.getElementById(`r-line-${j}`);
-        if (el) el.classList.remove('visible');
-      }
-
-      const sProg = document.getElementById('senderProgress');
-      const rProg = document.getElementById('receiverProgress');
-      if (sProg) sProg.style.width = '0%';
-      if (rProg) rProg.style.width = '0%';
-
-      const sRate = document.getElementById('senderRate');
-      const rRate = document.getElementById('receiverRate');
-      if (sRate) sRate.textContent = 'Streaming...';
-      if (rRate) rRate.textContent = 'Receiving...';
-
-      const playText = document.getElementById('playText');
-      if (playText) playText.textContent = 'Play';
-    }
-
-    function runSimulationStep() {
-      simStep++;
-      if (activeScenario === 'wrongpin') {
-        // Scenario 3: Wrong PIN
-        if (simStep === 1) {
-          showLine('s-line-1');
-          showLine('s-line-2');
-          simTimer = setTimeout(runSimulationStep, 600);
-        } else if (simStep === 2) {
-          showLine('s-line-3');
-          showLine('s-line-4');
-          simTimer = setTimeout(runSimulationStep, 800);
-        } else if (simStep === 3) {
-          showLine('r-line-1');
-          showLine('r-line-2');
-          simTimer = setTimeout(runSimulationStep, 600);
-        } else if (simStep === 4) {
-          showLine('s-line-5');
-          showLine('r-line-3');
-          simTimer = setTimeout(runSimulationStep, 700);
-        } else if (simStep === 5) {
-          showLine('s-line-6');
-          showLine('r-line-4');
-          simTimer = setTimeout(runSimulationStep, 700);
-        } else if (simStep === 6) {
-          showLine('s-line-7');
-          showLine('r-line-5');
-          showLine('r-line-6');
-          simTimer = setTimeout(runSimulationStep, 600);
-        } else if (simStep === 7) {
-          showLine('s-line-8');
-          showLine('r-line-7');
-          isRunning = false;
-          document.getElementById('playText').textContent = 'Replay';
-        }
-        return;
-      }
-
-      // Scenarios 1 & 2 (Nominal and No-Clobber)
-      if (simStep === 1) {
-        showLine('s-line-1');
-        showLine('s-line-2');
-        simTimer = setTimeout(runSimulationStep, 600);
-      } else if (simStep === 2) {
-        showLine('s-line-3');
-        showLine('s-line-4');
-        simTimer = setTimeout(runSimulationStep, 800);
-      } else if (simStep === 3) {
-        showLine('r-line-1');
-        showLine('r-line-2');
-        simTimer = setTimeout(runSimulationStep, 600);
-      } else if (simStep === 4) {
-        showLine('s-line-5');
-        showLine('s-line-6');
-        showLine('r-line-3');
-        showLine('r-line-4');
-        simTimer = setTimeout(runSimulationStep, 800);
-      } else if (simStep === 5) {
-        showLine('s-line-7');
-        showLine('r-line-5');
-        animateTransfer();
-      }
-    }
-
-    function animateTransfer() {
-      if (simProgress < 100) {
-        simProgress += 4;
-        if (simProgress > 100) simProgress = 100;
-
-        document.getElementById('senderProgress').style.width = `${simProgress}%`;
-        document.getElementById('receiverProgress').style.width = `${simProgress}%`;
-
-        const rate = (110 + Math.random() * 8).toFixed(1);
-        document.getElementById('senderRate').textContent = `${simProgress}% · ${rate} MB/s · 0.4s left`;
-        document.getElementById('receiverRate').textContent = `${simProgress}% · ${rate} MB/s`;
-
-        simTimer = setTimeout(animateTransfer, 50);
-      } else {
-        showLine('r-line-6');
-        showLine('r-line-7');
-        showLine('s-line-8');
-        isRunning = false;
-        document.getElementById('playText').textContent = 'Replay';
-      }
-    }
-
-    function showLine(id) {
-      const el = document.getElementById(id);
-      if (el) el.classList.add('visible');
-    }
-
-    function toggleSimulation() {
-      if (isRunning) {
-        clearTimeout(simTimer);
-        isRunning = false;
-        document.getElementById('playText').textContent = 'Resume';
-      } else {
-        if (simStep === 0 || simProgress >= 100 || (activeScenario === 'wrongpin' && simStep >= 7)) {
-          resetSimulation();
-        }
-        isRunning = true;
-        document.getElementById('playText').textContent = 'Pause';
-        runSimulationStep();
-      }
-    }
-
-    // Auto-start simulation when scrolled into view
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting && !isRunning && simStep === 0) {
-          toggleSimulation();
-          observer.unobserve(entry.target);
-        }
+    function loadScenario(num) {
+      currentScenario = num;
+      document.querySelectorAll('.btn-scenario').forEach((b, idx) => {
+        b.classList.toggle('active', idx + 1 === num);
+        b.setAttribute('aria-selected', idx + 1 === num ? 'true' : 'false');
       });
-    }, { threshold: 0.3 });
+      replayActiveScenario();
+    }
 
-    const simEl = document.getElementById('simulator');
-    if (simEl) observer.observe(simEl);
+    function replayActiveScenario() {
+      if (animationTimer) clearTimeout(animationTimer);
 
-    // Initial content setup
-    updateScenarioContent();
+      const sLog = document.getElementById('sender-log');
+      const rLog = document.getElementById('receiver-log');
+      const statusBadge = document.getElementById('beam-status');
+      const pulse = document.getElementById('beam-pulse');
+
+      sLog.innerHTML = '';
+      rLog.innerHTML = '';
+
+      const scen = scenarios[currentScenario];
+      statusBadge.innerText = scen.status;
+
+      // Render lines with delays
+      scen.sender.forEach(item => {
+        setTimeout(() => {
+          const div = document.createElement('div');
+          div.className = `sim-line ${getLineClass(item.type)}`;
+          div.innerText = item.text;
+          sLog.appendChild(div);
+          setTimeout(() => div.classList.add('visible'), 20);
+          sLog.scrollTop = sLog.scrollHeight;
+        }, item.delay);
+      });
+
+      scen.receiver.forEach(item => {
+        setTimeout(() => {
+          const div = document.createElement('div');
+          div.className = `sim-line ${getLineClass(item.type)}`;
+          div.innerText = item.text;
+          rLog.appendChild(div);
+          setTimeout(() => div.classList.add('visible'), 20);
+          rLog.scrollTop = rLog.scrollHeight;
+        }, item.delay);
+      });
+    }
+
+    function getLineClass(type) {
+      switch (type) {
+        case 'cmd': return 'sim-cmd';
+        case 'dim': return 'sim-dim';
+        case 'code': return 'sim-code';
+        case 'ok': return 'sim-ok';
+        case 'err': return 'sim-err';
+        case 'progress': return 'sim-progress';
+        default: return '';
+      }
+    }
+
+    // Launch initial simulation on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      replayActiveScenario();
+    });
   </script>
 </body>
 </html>

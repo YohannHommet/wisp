@@ -53,6 +53,7 @@ impl PendingFile {
             match temp.persist_noclobber(&path) {
                 Ok(file) => {
                     drop(file);
+                    #[cfg(unix)]
                     let mut sync_warning = None;
                     #[cfg(unix)]
                     {
@@ -70,6 +71,8 @@ impl PendingFile {
                             ));
                         }
                     }
+                    #[cfg(not(unix))]
+                    let sync_warning = None;
                     return Ok(PublishedFile { path, sync_warning });
                 }
                 Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => {

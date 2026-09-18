@@ -219,7 +219,7 @@ fn ctrl_c_returns_130_and_terminates_waiting_sender() {
     assert_eq!(events.last().unwrap()["exit_code"], 130);
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn json_receipt_handles_non_utf8_destination_without_panicking() {
     use std::os::unix::ffi::OsStringExt;

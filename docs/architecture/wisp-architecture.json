@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Wisp: LAN File Transfer Architecture",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1220, 760],
+    "views": [
+      {
+        "id": "transfer-path",
+        "label": "Verified transfer path",
+        "focus": ["sender", "cli", "core", "transport", "pake", "wire", "storage", "receiver"],
+        "note": "A send or receive command reaches one authenticated WSP/2 session and publishes only verified bytes."
+      },
+      {
+        "id": "session-setup",
+        "label": "Session setup",
+        "focus": ["core", "source", "code", "discovery", "transport", "pake"],
+        "note": "The sender prepares a file, creates a one-use code, and optionally advertises a QUIC endpoint."
+      },
+      {
+        "id": "build-and-checks",
+        "label": "Build and checks",
+        "focus": ["workspace", "cli", "checks"],
+        "note": "The Rust workspace builds a release CLI and verifies it with formatting, linting, tests, and an optional mDNS smoke test."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "sender",
+      "type": "external",
+      "label": "Sender computer",
+      "sublabel": "wisp send <file>",
+      "pos": [20, 320],
+      "size": [145, 64]
+    },
+    {
+      "id": "cli",
+      "type": "frontend",
+      "label": "wisp CLI",
+      "sublabel": "Clap, config, JSON events, signals",
+      "pos": [200, 320],
+      "size": [170, 64]
+    },
+    {
+      "id": "core",
+      "type": "backend",
+      "label": "wisp-core public API",
+      "sublabel": "SendOptions / ReceiveOptions",
+      "pos": [410, 320],
+      "size": [175, 64]
+    },
+    {
+      "id": "source",
+      "type": "database",
+      "label": "Source file preparation",
+      "sublabel": "metadata + BLAKE3 hash",
+      "pos": [410, 110],
+      "size": [175, 64]
+    },
+    {
+      "id": "code",
+      "type": "security",
+      "label": "Pairing code",
+      "sublabel": "one-use session secret",
+      "pos": [620, 110],
+      "size": [165, 64]
+    },
+    {
+      "id": "discovery",
+      "type": "messagebus",
+      "label": "mDNS discovery",
+      "sublabel": "optional LAN locator",
+      "pos": [620, 515],
+      "size": [165, 64]
+    },
+    {
+      "id": "transport",
+      "type": "security",
+      "label": "Ephemeral QUIC/TLS",
+      "sublabel": "IPv4 LAN endpoint",
+      "pos": [620, 320],
+      "size": [175, 64]
+    },
+    {
+      "id": "pake",
+      "type": "security",
+      "label": "Channel-bound SPAKE2",
+      "sublabel": "mutual authentication",
+      "pos": [820, 190],
+      "size": [180, 64]
+    },
+    {
+      "id": "wire",
+      "type": "backend",
+      "label": "WSP/2 transfer stream",
+      "sublabel": "GET, metadata, bytes, receipt",
+      "pos": [820, 320],
+      "size": [180, 64]
+    },
+    {
+      "id": "storage",
+      "type": "database",
+      "label": "Verified local storage",
+      "sublabel": "temporary file, sync, no overwrite",
+      "pos": [820, 475],
+      "size": [180, 64]
+    },
+    {
+      "id": "receiver",
+      "type": "external",
+      "label": "Receiver computer",
+      "sublabel": "wisp recv <code>",
+      "pos": [1050, 320],
+      "size": [150, 64]
+    },
+    {
+      "id": "workspace",
+      "type": "cloud",
+      "label": "Rust workspace",
+      "sublabel": "wisp-core + wisp CLI",
+      "pos": [200, 585],
+      "size": [170, 64]
+    },
+    {
+      "id": "checks",
+      "type": "cloud",
+      "label": "Release build and checks",
+      "sublabel": "cargo build, fmt, clippy, tests",
+      "pos": [410, 585],
+      "size": [185, 64]
+    }
+  ],
+  "connections": [
+    { "id": "sender-cli", "from": "sender", "to": "cli", "label": "invokes", "labelDy": 56, "variant": "emphasis" },
+    { "id": "cli-core", "from": "cli", "to": "core", "label": "maps flags to options", "labelDy": 56, "variant": "emphasis" },
+    { "id": "core-source", "from": "core", "to": "source", "label": "prepare before send", "fromSide": "top", "toSide": "bottom", "labelAt": [495, 250] },
+    { "id": "core-code", "from": "core", "to": "code", "label": "creates / parses", "fromSide": "top", "toSide": "left" },
+    { "id": "core-discovery", "from": "core", "to": "discovery", "label": "advertise / find", "fromSide": "bottom", "toSide": "left" },
+    { "id": "core-transport", "from": "core", "to": "transport", "label": "opens endpoint", "labelDy": 56, "variant": "emphasis" },
+    { "id": "transport-pake", "from": "transport", "to": "pake", "label": "TLS exporter", "fromSide": "right", "toSide": "left" },
+    { "id": "pake-wire", "from": "pake", "to": "wire", "label": "authenticated session", "fromSide": "bottom", "toSide": "top", "labelDy": 24, "variant": "security" },
+    { "id": "transport-wire", "from": "transport", "to": "wire", "label": "bidirectional stream", "labelDy": 49, "variant": "emphasis" },
+    { "id": "wire-storage", "from": "wire", "to": "storage", "label": "verify then publish", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
+    { "id": "wire-receiver", "from": "wire", "to": "receiver", "label": "encrypted LAN transfer", "labelDy": 56, "variant": "emphasis" },
+    { "id": "workspace-cli", "from": "workspace", "to": "cli", "label": "builds binary", "fromSide": "top", "toSide": "bottom", "variant": "dashed" },
+    { "id": "workspace-checks", "from": "workspace", "to": "checks", "label": "cargo workflows", "labelDy": 56, "variant": "dashed" },
+    { "id": "checks-cli", "from": "checks", "to": "cli", "label": "release artifact", "fromSide": "top", "toSide": "bottom", "variant": "dashed" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Runtime",
+      "items": [
+        "CLI-only: no daemon or persistent device registry",
+        "One file and one receiver per session",
+        "Discovery can be replaced by an explicit LAN address"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Trust and integrity",
+      "items": [
+        "QUIC/TLS carries the session",
+        "SPAKE2 is bound to the TLS channel",
+        "The receiver publishes only after checksum verification"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Build",
+      "items": [
+        "Rust 1.88 workspace with release LTO and stripped binaries",
+        "Release CLI: cargo build --locked --release --bin wisp",
+        "Verification: fmt, clippy, workspace tests, optional mDNS smoke test"
+      ]
+    }
+  ]
+}

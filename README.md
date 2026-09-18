@@ -4,18 +4,33 @@ Send a file between two computers on the same network. No account, browser, clou
 
 Wisp 0.2 is a terminal app for one file at a time. Install it on **both computers**, use the same Wi-Fi or Ethernet network, and keep both commands open until they finish. To send a folder or several files, create an archive first.
 
-## Install from this checkout
+## Installation
 
-With Rust 1.88 or newer and its platform build tools installed, open a terminal in the repository root and run on each computer:
+Install Wisp on **both computers**:
 
+### One-line installer (Recommended)
+
+**Linux & macOS** (x86_64, ARM64 / Apple Silicon):
+```sh
+curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash
+```
+
+**Windows PowerShell** (x64):
+```powershell
+irm https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.ps1 | iex
+```
+
+*Checksums (`SHA256SUMS`) are verified before installation. Binaries are installed to `~/.local/bin` or `%LOCALAPPDATA%\Wisp\bin` without requiring administrator or root privileges.*
+
+### From source with Cargo
+
+With Rust 1.88+ installed:
 ```sh
 cargo install --locked --path crates/wisp-cli
 wisp --version
 ```
 
-Expect `wisp 0.2.0`. If `wisp` is not found, reopen your terminal or use the [platform setup instructions](docs/USER_GUIDE.md#installation-and-path).
-
-Prefer a standalone binary? The [installer instructions](docs/USER_GUIDE.md#published-release-installers) require a published CLI release with checksums. Building this checkout does not publish one.
+See the [Platform setup instructions](docs/USER_GUIDE.md#installation-and-path) for custom PATH and version overrides.
 
 ## Your first transfer
 

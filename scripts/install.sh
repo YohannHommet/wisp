@@ -20,7 +20,12 @@ if [[ -z "$version" ]]; then
   resolved=$(curl --proto '=https' --tlsv1.2 -fsSL -o /dev/null -w '%{url_effective}' "$repo/releases/latest")
   version="${resolved##*/}"
 fi
-if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo 'WISP_VERSION must be a release tag such as v0.2.0.' >&2; exit 1; fi
+if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "No published release tag found at $repo/releases/latest (got '$version')." >&2
+  echo "Specify an explicit tag with WISP_VERSION=vX.Y.Z, or install from source with Cargo:" >&2
+  echo "  cargo install --locked --path crates/wisp-cli" >&2
+  exit 1
+fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/wisp.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 base="$repo/releases/download/$version"

@@ -8,6 +8,54 @@ Two users deliberately transfer one regular file over a reachable local IPv4 net
 
 A network adversary can observe, spoof, reorder, redirect or drop discovery and transfer traffic. Network availability and traffic-analysis resistance are not guaranteed. Persistent pairing, internet relays, IPv6 and NAT traversal are not supported in this release.
 
+## Threat matrix & security boundaries
+
+```mermaid
+flowchart TD
+    subgraph LAN["Untrusted Local Network (Wi-Fi / Ethernet)"]
+        ADV["Network Adversary / Rogue Peer"]
+        MDNS["mDNS UDP Multicast (Public Session Locator only)"]
+    end
+
+    subgraph SEC["WSP/2 Authenticated Channel"]
+        QUIC["Quinn QUIC TLS 1.3 Handshake (Retry token address validation)"]
+        PAKE["SPAKE2 Key Exchange (27.6-bit 4-word PIN + TLS Exporter binding)"]
+        CONF["Mutual Key Confirmation (RFC 9382 directional MAC verification)"]
+        STREAM["Encrypted Wire Streaming (ChaCha20-Poly1305 / AES-128-GCM)"]
+    end
+
+    subgraph FS["Filesystem & Storage Boundary"]
+        BLAKE["BLAKE3 Streaming Integrity Verification"]
+        ATOM["Private Temporary File (.wisp-*.part, mode 0600)"]
+        NOCLOB["Atomic persist_noclobber - file (1).ext"]
+        RCPT["Cryptographic Delivery Receipt"]
+    end
+
+    MDNS --> QUIC
+    QUIC --> PAKE
+    PAKE --> CONF
+    CONF --> STREAM
+    STREAM --> BLAKE
+    BLAKE --> ATOM
+    ATOM --> NOCLOB
+    NOCLOB --> RCPT
+
+    ADV -.->|"Eavesdropping thwarted by TLS 1.3"| STREAM
+    ADV -.->|"MITM thwarted by SPAKE2 Channel Binding"| CONF
+    ADV -.->|"Brute-force thwarted: 1 attempt limit (p=1/207M)"| PAKE
+    ADV -.->|"Path traversal neutralized by sanitization"| ATOM
+```
+
+| Threat Vector / Attacker Profile | Threat Description | WSP/2 Defense Mechanism | Residual Risk |
+| :--- | :--- | :--- | :--- |
+| **Passive Wi-Fi Sniffer** | Captures all multicast and unicast packets on the local subnet. | TLS 1.3 AEAD encryption. Password is never transmitted in the clear or hashed; SPAKE2 derives symmetric keys via Diffie-Hellman operations over Curve25519. | Traffic volume, timing, and peer IP addresses remain observable. |
+| **Active MITM / ARP Spoofing** | Intercepts QUIC packets and attempts to act as man-in-the-middle. | SPAKE2 mutual key confirmation MAC directly incorporates a 32-byte TLS channel exporter. Without the 4-word secret, an attacker cannot complete the handshake on either leg. | Adversary can drop packets to deny service. |
+| **Online PIN Brute-Force** | Tries password candidates across multiple connection attempts. | Strict single-attempt policy: exactly one SPAKE2 authentication attempt permitted per session code. Any MAC mismatch immediately and permanently terminates the session. | Probability of guessing on the single attempt is $1 / 120^4 \approx 1 / 207{,}360{,}000$. |
+| **Pre-Auth Network Flooder** | Sends unauthenticated UDP probes or port scans to exhaust sender state. | QUIC Retry tokens validate source IPv4 before allocating memory. Senders tolerate up to 3 pre-auth transport attempts while retaining mDNS broadcast. | Heavy network-level UDP flooding can cause socket buffer exhaustion. |
+| **Malicious Path Traversal** | Sender sends malicious filenames like `../../etc/shadow` or Windows device names. | Filename sanitizer strips all directory separators, Windows drive letters, UNC paths, reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `CLOCK$`), and Unicode RTL override characters. | None; only flat, sanitized basename is ever used. |
+| **Destination File Clobbering** | Malicious or accidental overwrite of existing critical files. | Receiver writes to private random `.wisp-*.part` file, then atomically publishes via `persist_noclobber`. Collisions automatically append `(1)`, `(2)` suffixes. | None; existing files and symlinks are never overwritten. |
+| **Payload Tampering / Bit Flips** | Modifies payload in transit or cuts stream prematurely. | BLAKE3 cryptographic streaming checksum verified on the fly against sender metadata. Receiver aborts and deletes temp file if end-of-stream or digest mismatches. | None; unverified bytes are never published. |
+
 ## Discovery is public; the password is not
 
 A code has an independent random eight-digit locator and four independently sampled words from a 120-word list, with replacement. The four words provide log2(120^4), approximately 27.6 bits, of secret entropy. The locator is public and contributes no authentication secrecy.

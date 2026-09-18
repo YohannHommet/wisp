@@ -1,0 +1,2091 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wisp — Zero-Cloud, Cryptographically Verified LAN File Transfers</title>
+  <meta name="description" content="Direct, peer-to-peer file transfer on local networks over QUIC TLS 1.3 with SPAKE2 password authentication and BLAKE3 integrity receipts. Built with 100% safe Rust.">
+  <meta name="theme-color" content="#07090e">
+
+  <!-- Open Graph / Social Media -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Wisp — Zero-Cloud, Verified LAN File Transfers">
+  <meta property="og:description" content="Send files between computers on the same network at wire speed. No servers, no accounts, no cloud relays. Single-use SPAKE2 authentication over QUIC TLS 1.3 with BLAKE3 cryptographic receipts.">
+  <meta property="og:url" content="https://yohannhommet.github.io/wisp/">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    /* ==========================================================================
+       CSS Variables & Design Tokens (Stripe / Linear / Vercel Aesthetic)
+       ========================================================================== */
+    :root {
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+      /* Dark Theme (Default) */
+      --bg-base: #07090e;
+      --bg-surface: #0e131f;
+      --bg-surface-elevated: #141b2d;
+      --bg-card: rgba(16, 23, 39, 0.7);
+      --bg-card-hover: rgba(24, 34, 58, 0.85);
+      --bg-code: #0b0f19;
+
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-medium: rgba(255, 255, 255, 0.14);
+      --border-accent: rgba(6, 182, 212, 0.4);
+
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --text-inverse: #07090e;
+
+      --cyan-400: #22d3ee;
+      --cyan-500: #06b6d4;
+      --cyan-glow: rgba(6, 182, 212, 0.25);
+
+      --violet-400: #a78bfa;
+      --violet-500: #8b5cf6;
+      --violet-glow: rgba(139, 92, 246, 0.25);
+
+      --emerald-400: #34d399;
+      --emerald-500: #10b981;
+      --emerald-glow: rgba(16, 185, 129, 0.25);
+
+      --amber-400: #fbbf24;
+
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-xl: 24px;
+      --radius-full: 9999px;
+
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+      --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
+      --shadow-glow: 0 0 40px rgba(6, 182, 212, 0.15);
+
+      --container-max: 1200px;
+      --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+      --transition-smooth: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    [data-theme="light"] {
+      --bg-base: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-surface-elevated: #f1f5f9;
+      --bg-card: rgba(255, 255, 255, 0.85);
+      --bg-card-hover: #ffffff;
+      --bg-code: #0f172a;
+
+      --border-subtle: rgba(0, 0, 0, 0.08);
+      --border-medium: rgba(0, 0, 0, 0.15);
+      --border-accent: rgba(6, 182, 212, 0.6);
+
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #64748b;
+      --text-inverse: #f8fafc;
+
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.08);
+      --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
+      --shadow-glow: 0 0 40px rgba(6, 182, 212, 0.1);
+    }
+
+    /* ==========================================================================
+       Reset & Base Styles
+       ========================================================================== */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      font-size: 16px;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-base);
+      color: var(--text-primary);
+      line-height: 1.65;
+      overflow-x: hidden;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    /* Subtle background grid pattern */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: 
+        linear-gradient(to right, var(--border-subtle) 1px, transparent 1px),
+        linear-gradient(to bottom, var(--border-subtle) 1px, transparent 1px);
+      background-size: 40px 40px;
+      mask-image: radial-gradient(ellipse 60% 50% at 50% 0%, #000 70%, transparent 100%);
+      -webkit-mask-image: radial-gradient(ellipse 60% 50% at 50% 0%, #000 70%, transparent 100%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Ambient glow blobs */
+    .glow-blob {
+      position: absolute;
+      border-radius: var(--radius-full);
+      filter: blur(120px);
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.45;
+    }
+    .glow-cyan {
+      top: -100px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 700px;
+      height: 400px;
+      background: radial-gradient(circle, var(--cyan-500) 0%, transparent 70%);
+    }
+    .glow-violet {
+      top: 600px;
+      right: 5%;
+      width: 500px;
+      height: 450px;
+      background: radial-gradient(circle, var(--violet-500) 0%, transparent 70%);
+      opacity: 0.3;
+    }
+
+    /* Accessibility Focus */
+    :focus-visible {
+      outline: 2px solid var(--cyan-400);
+      outline-offset: 3px;
+      border-radius: var(--radius-sm);
+    }
+
+    .skip-link {
+      position: absolute;
+      top: -60px;
+      left: 16px;
+      background: var(--cyan-500);
+      color: #000;
+      font-weight: 700;
+      padding: 10px 18px;
+      border-radius: var(--radius-sm);
+      z-index: 1000;
+      transition: top var(--transition-fast);
+      text-decoration: none;
+    }
+    .skip-link:focus {
+      top: 16px;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    img, svg {
+      vertical-align: middle;
+    }
+
+    .container {
+      width: 100%;
+      max-width: var(--container-max);
+      margin: 0 auto;
+      padding: 0 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ==========================================================================
+       Header & Navigation
+       ========================================================================== */
+    .site-header {
+      position: sticky;
+      top: 0;
+      width: 100%;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      background-color: rgba(7, 9, 14, 0.75);
+      border-bottom: 1px solid var(--border-subtle);
+      z-index: 100;
+      transition: background-color var(--transition-smooth);
+    }
+    [data-theme="light"] .site-header {
+      background-color: rgba(248, 250, 252, 0.85);
+    }
+
+    .nav-wrapper {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 72px;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-mark {
+      width: 38px;
+      height: 38px;
+      border-radius: var(--radius-md);
+      background: linear-gradient(135deg, var(--cyan-500), var(--violet-500));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      box-shadow: 0 0 20px var(--cyan-glow);
+    }
+
+    .brand-name {
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .version-pill {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: var(--radius-full);
+      background: rgba(6, 182, 212, 0.12);
+      color: var(--cyan-400);
+      border: 1px solid rgba(6, 182, 212, 0.25);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      list-style: none;
+    }
+
+    .nav-link {
+      font-size: 0.9375rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      transition: color var(--transition-fast);
+      position: relative;
+    }
+    .nav-link:hover {
+      color: var(--text-primary);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .theme-toggle-btn {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+    .theme-toggle-btn:hover {
+      color: var(--text-primary);
+      border-color: var(--border-medium);
+      background: var(--bg-surface-elevated);
+    }
+
+    .btn-github {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: var(--radius-md);
+      font-size: 0.875rem;
+      font-weight: 600;
+      background: var(--bg-surface-elevated);
+      color: var(--text-primary);
+      border: 1px solid var(--border-subtle);
+      transition: all var(--transition-fast);
+    }
+    .btn-github:hover {
+      border-color: var(--border-medium);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .mobile-menu-toggle {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text-primary);
+      cursor: pointer;
+      padding: 8px;
+    }
+
+    /* ==========================================================================
+       Hero Section
+       ========================================================================== */
+    .hero-section {
+      padding: 72px 0 64px 0;
+      text-align: center;
+      position: relative;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 14px;
+      border-radius: var(--radius-full);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-medium);
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 28px;
+      backdrop-filter: blur(8px);
+    }
+    .hero-badge .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: var(--radius-full);
+      background-color: var(--emerald-400);
+      box-shadow: 0 0 10px var(--emerald-400);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.2); opacity: 0.7; }
+    }
+
+    .hero-title {
+      font-size: clamp(2.25rem, 5.5vw, 4rem);
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -0.035em;
+      margin-bottom: 24px;
+      max-width: 960px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .gradient-text {
+      background: linear-gradient(135deg, #ffffff 30%, var(--cyan-400) 70%, var(--violet-400) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    [data-theme="light"] .gradient-text {
+      background: linear-gradient(135deg, #0f172a 30%, var(--cyan-500) 70%, var(--violet-500) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero-subtitle {
+      font-size: clamp(1.0625rem, 2vw, 1.25rem);
+      color: var(--text-secondary);
+      max-width: 760px;
+      margin: 0 auto 36px auto;
+      font-weight: 400;
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 48px;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: linear-gradient(135deg, var(--cyan-500), #0284c7);
+      color: white;
+      font-weight: 600;
+      font-size: 1rem;
+      padding: 14px 28px;
+      border-radius: var(--radius-md);
+      box-shadow: 0 4px 20px var(--cyan-glow);
+      transition: all var(--transition-fast);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(6, 182, 212, 0.4);
+      background: linear-gradient(135deg, var(--cyan-400), #0369a1);
+    }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--bg-card);
+      color: var(--text-primary);
+      font-weight: 600;
+      font-size: 1rem;
+      padding: 14px 26px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-medium);
+      backdrop-filter: blur(8px);
+      transition: all var(--transition-fast);
+    }
+    .btn-secondary:hover {
+      background: var(--bg-surface-elevated);
+      border-color: var(--cyan-500);
+      transform: translateY(-2px);
+    }
+
+    /* Hero Fast Command Pill */
+    .quick-command-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-full);
+      padding: 8px 16px 8px 20px;
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      box-shadow: var(--shadow-sm);
+    }
+    .quick-command-pill code {
+      color: var(--cyan-400);
+    }
+    .copy-pill-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+      border-radius: var(--radius-sm);
+      transition: color var(--transition-fast);
+    }
+    .copy-pill-btn:hover {
+      color: var(--text-primary);
+    }
+
+    /* ==========================================================================
+       Interactive Dual-Terminal Demo (Linear / Stripe Class Widget)
+       ========================================================================== */
+    .demo-terminal-wrapper {
+      max-width: 1040px;
+      margin: 48px auto 0 auto;
+      border-radius: var(--radius-lg);
+      background: var(--bg-code);
+      border: 1px solid var(--border-medium);
+      box-shadow: var(--shadow-lg), var(--shadow-glow);
+      overflow: hidden;
+      text-align: left;
+    }
+
+    .terminal-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: rgba(15, 23, 42, 0.85);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .terminal-dots {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: var(--radius-full);
+    }
+    .dot-red { background-color: #ef4444; }
+    .dot-yellow { background-color: #f59e0b; }
+    .dot-green { background-color: #10b981; }
+
+    .terminal-title {
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .demo-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .control-btn {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      padding: 5px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all var(--transition-fast);
+    }
+    .control-btn:hover {
+      color: var(--text-primary);
+      border-color: var(--border-medium);
+    }
+    .control-btn.active {
+      background: var(--cyan-500);
+      color: white;
+      border-color: var(--cyan-400);
+    }
+
+    .control-select {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      padding: 5px 10px;
+      border-radius: var(--radius-sm);
+      font-family: var(--font-sans);
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+    .control-select:hover {
+      border-color: var(--border-medium);
+    }
+    .control-select:focus-visible {
+      outline: 2px solid var(--cyan-400);
+    }
+
+    .terminals-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      min-height: 380px;
+    }
+
+    .terminal-pane {
+      padding: 24px;
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      line-height: 1.6;
+      color: #e2e8f0;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+    .pane-sender {
+      border-right: 1px solid var(--border-subtle);
+      background-color: rgba(11, 15, 25, 0.95);
+    }
+    .pane-receiver {
+      background-color: rgba(15, 23, 42, 0.95);
+    }
+
+    .pane-header {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text-muted);
+    }
+    .pane-badge {
+      padding: 2px 8px;
+      border-radius: var(--radius-full);
+      font-size: 0.7rem;
+    }
+    .badge-sender {
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--cyan-400);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+    }
+    .badge-receiver {
+      background: rgba(139, 92, 246, 0.15);
+      color: var(--violet-400);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+    }
+
+    .terminal-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .terminal-line {
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 200ms ease, transform 200ms ease;
+    }
+    .terminal-line.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .prompt-symbol {
+      color: var(--emerald-400);
+      margin-right: 8px;
+    }
+    .cmd-text {
+      color: #ffffff;
+      font-weight: 600;
+    }
+    .code-highlight {
+      color: var(--amber-400);
+      font-weight: 700;
+      background: rgba(251, 191, 36, 0.1);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .progress-bar-container {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      overflow: hidden;
+      margin: 8px 0;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--cyan-500), var(--emerald-400));
+      transition: width 100ms linear;
+    }
+    .success-text {
+      color: var(--emerald-400);
+      font-weight: 600;
+    }
+    .dim-text {
+      color: var(--text-muted);
+    }
+
+    /* ==========================================================================
+       Features Section (Value Props Grid)
+       ========================================================================== */
+    .section-title-wrapper {
+      text-align: center;
+      max-width: 760px;
+      margin: 0 auto 56px auto;
+    }
+
+    .section-pill {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: var(--cyan-400);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 12px;
+    }
+
+    .section-heading {
+      font-size: clamp(2rem, 4vw, 2.75rem);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.2;
+      margin-bottom: 16px;
+    }
+
+    .section-subheading {
+      font-size: 1.125rem;
+      color: var(--text-secondary);
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 24px;
+      margin-bottom: 96px;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 32px;
+      backdrop-filter: blur(12px);
+      transition: all var(--transition-smooth);
+      position: relative;
+      overflow: hidden;
+    }
+    .feature-card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-medium);
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-md);
+    }
+
+    .card-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 24px;
+      background: var(--bg-surface-elevated);
+      color: var(--cyan-400);
+      border: 1px solid var(--border-subtle);
+    }
+    .feature-card:nth-child(2) .card-icon { color: var(--violet-400); }
+    .feature-card:nth-child(3) .card-icon { color: var(--emerald-400); }
+    .feature-card:nth-child(4) .card-icon { color: var(--amber-400); }
+
+    .card-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+      letter-spacing: -0.015em;
+    }
+
+    .card-desc {
+      color: var(--text-secondary);
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* Mobile Drawer */
+    .mobile-drawer {
+      display: none;
+      position: fixed;
+      top: 72px;
+      left: 0;
+      width: 100%;
+      background: var(--bg-surface-elevated);
+      border-bottom: 1px solid var(--border-medium);
+      padding: 24px;
+      z-index: 99;
+      box-shadow: var(--shadow-lg);
+      flex-direction: column;
+      gap: 16px;
+    }
+    .mobile-drawer.open {
+      display: flex;
+    }
+    .mobile-drawer-link {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    /* Architecture Banner Explicit Contrast */
+    .arch-banner {
+      background: linear-gradient(135deg, #0e131f 0%, #141b2d 100%) !important;
+      border: 1px solid rgba(255, 255, 255, 0.12) !important;
+      border-radius: var(--radius-xl);
+      padding: 48px;
+      margin-bottom: 96px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 40px;
+      box-shadow: var(--shadow-lg);
+      position: relative;
+      overflow: hidden;
+      color: #f8fafc !important;
+    }
+
+    .arch-banner::after {
+      content: '';
+      position: absolute;
+      right: -100px;
+      top: -100px;
+      width: 350px;
+      height: 350px;
+      background: radial-gradient(circle, var(--cyan-glow), transparent 70%);
+      pointer-events: none;
+    }
+
+    .arch-content {
+      max-width: 620px;
+    }
+
+    .arch-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--cyan-400);
+      background: rgba(6, 182, 212, 0.15);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+      padding: 4px 12px;
+      border-radius: var(--radius-full);
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .arch-heading {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      margin-bottom: 16px;
+      color: #ffffff !important;
+    }
+
+    .arch-desc {
+      color: #cbd5e1 !important;
+      font-size: 1rem;
+      margin-bottom: 28px;
+      line-height: 1.6;
+    }
+
+    .arch-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .arch-preview-card {
+      background: #0b0f19 !important;
+      border: 1px solid rgba(255, 255, 255, 0.15) !important;
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      min-width: 320px;
+      box-shadow: var(--shadow-md);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      color: #e2e8f0 !important;
+    }
+
+    .flow-step {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      color: #e2e8f0 !important;
+    }
+    .flow-num {
+      width: 24px;
+      height: 24px;
+      border-radius: var(--radius-full);
+      background: rgba(6, 182, 212, 0.2);
+      color: var(--cyan-400);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      border: 1px solid rgba(6, 182, 212, 0.4);
+    }
+
+    /* Tabs Styling Polish */
+    [data-theme="light"] .tabs-container {
+      background: #ffffff;
+    }
+    [data-theme="light"] .tabs-nav {
+      background: #f1f5f9;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    [data-theme="light"] .tab-btn {
+      color: #64748b;
+    }
+    [data-theme="light"] .tab-btn.active {
+      color: #0284c7;
+      background: #ffffff;
+      border-bottom-color: #0284c7;
+    }
+    [data-theme="light"] .code-box {
+      background: #0f172a;
+      color: #f8fafc;
+    }
+    [data-theme="light"] .cli-table th {
+      background: #f1f5f9;
+      color: #475569;
+    }
+    [data-theme="light"] .cli-table td {
+      color: #334155;
+    }
+
+    /* Quick command pill polish */
+    .quick-command-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-full);
+      padding: 8px 16px 8px 20px;
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      box-shadow: var(--shadow-sm);
+      max-width: 100%;
+    }
+    .quick-command-pill code {
+      color: var(--cyan-400);
+    }
+    [data-theme="light"] .quick-command-pill code {
+      color: #0284c7;
+    }
+
+    /* ==========================================================================
+       Install & Quickstart Tabs
+       ========================================================================== */
+    .install-section {
+      padding: 48px 0 96px 0;
+    }
+
+    .tabs-container {
+      max-width: 880px;
+      margin: 0 auto;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+    }
+
+    .tabs-nav {
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid var(--border-subtle);
+      background: var(--bg-code);
+      overflow-x: auto;
+    }
+
+    .tab-btn {
+      padding: 16px 24px;
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 0.9375rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      border-bottom: 2px solid transparent;
+      transition: all var(--transition-fast);
+    }
+    .tab-btn:hover {
+      color: var(--text-primary);
+    }
+    .tab-btn.active {
+      color: var(--cyan-400);
+      border-bottom-color: var(--cyan-400);
+      background: rgba(6, 182, 212, 0.05);
+    }
+
+    .tab-pane {
+      display: none;
+      padding: 32px;
+    }
+    .tab-pane.active {
+      display: block;
+    }
+
+    .code-box {
+      position: relative;
+      background: var(--bg-code);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 20px 24px;
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      color: #e2e8f0;
+      overflow-x: auto;
+      margin-bottom: 16px;
+    }
+
+    .code-copy-btn {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      padding: 6px 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all var(--transition-fast);
+    }
+    .code-copy-btn:hover {
+      color: var(--text-primary);
+      border-color: var(--border-medium);
+    }
+
+    .pane-description {
+      color: var(--text-secondary);
+      font-size: 0.9375rem;
+    }
+
+    /* ==========================================================================
+       CLI Command Cheatsheet
+       ========================================================================== */
+    .cli-table-wrapper {
+      max-width: 880px;
+      margin: 48px auto 96px auto;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-md);
+    }
+
+    .cli-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.9375rem;
+    }
+    .cli-table th {
+      background: var(--bg-code);
+      padding: 16px 24px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .cli-table td {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+    }
+    .cli-table tr:last-child td {
+      border-bottom: none;
+    }
+    .cli-table code {
+      font-family: var(--font-mono);
+      color: var(--cyan-400);
+      font-size: 0.875rem;
+      background: rgba(6, 182, 212, 0.08);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    /* ==========================================================================
+       Footer
+       ========================================================================== */
+    .site-footer {
+      border-top: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      padding: 64px 0 40px 0;
+      margin-top: auto;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr 1fr;
+      gap: 48px;
+      margin-bottom: 48px;
+    }
+
+    .footer-brand p {
+      margin-top: 16px;
+      max-width: 320px;
+      line-height: 1.6;
+    }
+
+    .footer-col h4 {
+      color: var(--text-primary);
+      font-size: 0.875rem;
+      font-weight: 700;
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .footer-col ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .footer-col a {
+      color: var(--text-secondary);
+      transition: color var(--transition-fast);
+    }
+    .footer-col a:hover {
+      color: var(--cyan-400);
+    }
+
+    .footer-bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 32px;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    /* ==========================================================================
+       Responsive Breakpoints (1440, 768, 375)
+       ========================================================================== */
+    @media (max-width: 1024px) {
+      .arch-banner {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .arch-preview-card {
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .nav-links {
+        display: none;
+      }
+      .mobile-menu-toggle {
+        display: block;
+      }
+      .terminals-grid {
+        grid-template-columns: 1fr;
+      }
+      .pane-sender {
+        border-right: none;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .footer-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .terminal-title {
+        display: none;
+      }
+      .terminal-topbar {
+        justify-content: space-between;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .footer-grid {
+        grid-template-columns: 1fr;
+      }
+      .hero-actions {
+        flex-direction: column;
+        width: 100%;
+      }
+      .btn-primary, .btn-secondary {
+        width: 100%;
+        justify-content: center;
+      }
+      .quick-command-pill {
+        width: 100%;
+        overflow-x: auto;
+        white-space: nowrap;
+        justify-content: space-between;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Accessible Skip Link -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <!-- Ambient background glow -->
+  <div class="glow-blob glow-cyan" aria-hidden="true"></div>
+  <div class="glow-blob glow-violet" aria-hidden="true"></div>
+
+  <!-- Header -->
+  <header class="site-header" role="banner">
+    <div class="container nav-wrapper">
+      <div class="brand-group">
+        <div class="logo-mark" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+          </svg>
+        </div>
+        <a href="#" class="brand-name">
+          Wisp
+          <span class="version-pill">WSP/2</span>
+        </a>
+      </div>
+
+      <nav class="site-nav" role="navigation" aria-label="Main Navigation">
+        <ul class="nav-links">
+          <li><a href="#features" class="nav-link">Features</a></li>
+          <li><a href="#simulator" class="nav-link">Live Demo</a></li>
+          <li><a href="architecture/wisp-architecture.html" class="nav-link">Architecture</a></li>
+          <li><a href="#install" class="nav-link">Quickstart</a></li>
+          <li><a href="#cheatsheet" class="nav-link">CLI Guide</a></li>
+        </ul>
+      </nav>
+
+      <div class="header-actions">
+        <button id="themeToggle" class="theme-toggle-btn" aria-label="Toggle Light/Dark Theme" title="Toggle Theme">
+          <svg id="themeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
+
+        <a href="https://github.com/YohannHommet/wisp" target="_blank" rel="noopener noreferrer" class="btn-github">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+
+        <button id="mobileMenuBtn" class="mobile-menu-toggle" aria-label="Toggle Navigation Menu" aria-expanded="false" title="Menu">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile Drawer -->
+    <div id="mobileDrawer" class="mobile-drawer" role="dialog" aria-modal="true" aria-label="Mobile Navigation">
+      <a href="#features" class="mobile-drawer-link" onclick="closeMobileMenu()">Features</a>
+      <a href="#simulator" class="mobile-drawer-link" onclick="closeMobileMenu()">Live Demo</a>
+      <a href="architecture/wisp-architecture.html" class="mobile-drawer-link" onclick="closeMobileMenu()">Architecture</a>
+      <a href="#install" class="mobile-drawer-link" onclick="closeMobileMenu()">Quickstart</a>
+      <a href="#cheatsheet" class="mobile-drawer-link" onclick="closeMobileMenu()">CLI Guide</a>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main id="main-content">
+    <!-- Hero Section -->
+    <section class="hero-section">
+      <div class="container">
+        <div class="hero-badge">
+          <span class="status-dot"></span>
+          <span>WSP/2 Protocol · Quinn QUIC TLS 1.3 · 100% Safe Rust</span>
+        </div>
+
+        <h1 class="hero-title">
+          Zero-cloud, cryptographically verified <span class="gradient-text">LAN file transfers.</span>
+        </h1>
+
+        <p class="hero-subtitle">
+          Send any file between computers on the same network at wire speed. No servers, no accounts, no cloud relays, no tracking. Authenticated with SPAKE2 key exchange and sealed with BLAKE3 cryptographic receipts.
+        </p>
+
+        <div class="hero-actions">
+          <a href="#install" class="btn-primary">
+            <span>Get Started</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+              <polyline points="12 5 19 12 12 19"></polyline>
+            </svg>
+          </a>
+
+          <a href="architecture/wisp-architecture.html" class="btn-secondary">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+              <polyline points="2 17 12 22 22 17"></polyline>
+              <polyline points="2 12 12 17 22 12"></polyline>
+            </svg>
+            <span>Interactive Architecture</span>
+          </a>
+        </div>
+
+        <div class="quick-command-pill">
+          <span>Quick Install:</span>
+          <code>cargo install --locked --path crates/wisp-cli</code>
+          <button class="copy-pill-btn" onclick="copySnippet('cargo install --locked --path crates/wisp-cli', this)" aria-label="Copy installation command" title="Copy command">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Interactive Terminal Simulator Widget -->
+        <div class="demo-terminal-wrapper" id="simulator" aria-label="Interactive Terminal Simulation">
+          <div class="terminal-topbar">
+            <div class="terminal-dots">
+              <div class="dot dot-red"></div>
+              <div class="dot dot-yellow"></div>
+              <div class="dot dot-green"></div>
+            </div>
+            <div class="terminal-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4 17 10 11 4 5"></polyline>
+                <line x1="12" y1="19" x2="20" y2="19"></line>
+              </svg>
+              <span>Wisp Interactive Split-Terminal Simulation</span>
+            </div>
+            <div class="demo-controls">
+              <select id="scenarioSelector" class="control-select" onchange="changeScenario(this.value)" aria-label="Select Demo Scenario">
+                <option value="nominal">Scenario 1: Nominal Verified Transfer</option>
+                <option value="noclobber">Scenario 2: No-Clobber Collision</option>
+                <option value="wrongpin">Scenario 3: Adversarial Wrong PIN</option>
+              </select>
+              <button id="demoPlayBtn" class="control-btn active" onclick="toggleSimulation()">
+                <svg id="playIcon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                <span id="playText">Replay</span>
+              </button>
+              <button class="control-btn" onclick="resetSimulation()">Reset</button>
+            </div>
+          </div>
+
+          <div class="terminals-grid">
+            <!-- Left Pane: Sender -->
+            <div class="terminal-pane pane-sender">
+              <div class="pane-header">
+                <span>Computer A (Sender)</span>
+                <span class="pane-badge badge-sender">wisp send</span>
+              </div>
+              <div class="terminal-content" id="senderContent">
+                <div class="terminal-line visible" id="s-cmd-line">
+                  <span class="prompt-symbol">❯</span>
+                  <span class="cmd-text" id="s-cmd-text">wisp send dataset-2026.tar.gz</span>
+                </div>
+                <div class="terminal-line" id="s-line-1">
+                  <span class="dim-text">Discovery: broadcasting ephemeral mDNS beacon...</span>
+                </div>
+                <div class="terminal-line" id="s-line-2">
+                  <span class="dim-text">File:</span> <strong>dataset-2026.tar.gz</strong> (48.5 MB)
+                </div>
+                <div class="terminal-line" id="s-line-3">
+                  <span class="dim-text">Receive with:</span>
+                </div>
+                <div class="terminal-line" id="s-line-4">
+                  <span class="code-highlight">wisp recv 71429813-foster-gadget-beacon-prism</span>
+                </div>
+                <div class="terminal-line" id="s-line-5">
+                  <span class="dim-text">Peer connected: 192.168.1.55:54120 (QUIC TLS 1.3)</span>
+                </div>
+                <div class="terminal-line" id="s-line-6">
+                  <span class="dim-text">SPAKE2 authenticated with TLS channel binding ✔</span>
+                </div>
+                <div class="terminal-line" id="s-line-7">
+                  <div class="progress-bar-container">
+                    <div class="progress-bar-fill" id="senderProgress"></div>
+                  </div>
+                  <span class="dim-text" id="senderRate">Streaming...</span>
+                </div>
+                <div class="terminal-line" id="s-line-8">
+                  <span class="success-text">✔ Delivered and verified (BLAKE3 receipt signed)</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Pane: Receiver -->
+            <div class="terminal-pane pane-receiver">
+              <div class="pane-header">
+                <span>Computer B (Receiver)</span>
+                <span class="pane-badge badge-receiver">wisp recv</span>
+              </div>
+              <div class="terminal-content" id="receiverContent">
+                <div class="terminal-line visible" id="r-cmd-line">
+                  <span class="prompt-symbol">❯</span>
+                  <span class="cmd-text" id="r-cmd-text">wisp recv 71429813-foster-gadget-beacon-prism --dir ~/Downloads</span>
+                </div>
+                <div class="terminal-line" id="r-line-1">
+                  <span class="dim-text">Discovery: listening for session 71429813...</span>
+                </div>
+                <div class="terminal-line" id="r-line-2">
+                  <span class="dim-text">Found peer at 192.168.1.42:51023 (14ms)</span>
+                </div>
+                <div class="terminal-line" id="r-line-3">
+                  <span class="dim-text">Performing mutual SPAKE2 key confirmation...</span>
+                </div>
+                <div class="terminal-line" id="r-line-4">
+                  <span class="dim-text">Incoming file:</span> <strong>dataset-2026.tar.gz</strong> (48.5 MB)
+                </div>
+                <div class="terminal-line" id="r-line-5">
+                  <div class="progress-bar-container">
+                    <div class="progress-bar-fill" id="receiverProgress"></div>
+                  </div>
+                  <span class="dim-text" id="receiverRate">Receiving...</span>
+                </div>
+                <div class="terminal-line" id="r-line-6">
+                  <span class="dim-text">BLAKE3 checksum: 8f4a1c72...09e8 verified ✔</span>
+                </div>
+                <div class="terminal-line" id="r-line-7">
+                  <span class="success-text">✔ Saved and verified: ~/Downloads/dataset-2026.tar.gz</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features-section container" id="features">
+      <div class="section-title-wrapper">
+        <span class="section-pill">Engineered for Security & Speed</span>
+        <h2 class="section-heading">Peer-to-peer simplicity. Zero compromise.</h2>
+        <p class="section-subheading">Every detail of Wisp is built to guarantee wire-speed throughput without sacrificing privacy, memory safety, or cryptographic rigor.</p>
+      </div>
+
+      <div class="features-grid">
+        <!-- Feature 1 -->
+        <article class="feature-card">
+          <div class="card-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+              <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+              <line x1="6" y1="6" x2="6.01" y2="6"></line>
+              <line x1="6" y1="18" x2="6.01" y2="18"></line>
+            </svg>
+          </div>
+          <h3 class="card-title">Pure LAN P2P (Zero Cloud)</h3>
+          <p class="card-desc">Transfers flow directly over local UDP QUIC sockets. No middleman, no telemetry, no cloud relays, no bandwidth throttling. Saturates full 1GbE and 10GbE local links.</p>
+        </article>
+
+        <!-- Feature 2 -->
+        <article class="feature-card">
+          <div class="card-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </div>
+          <h3 class="card-title">SPAKE2 Authentication</h3>
+          <p class="card-desc">Single-use PINs with four human-friendly words. Authenticated key exchange bound directly to TLS 1.3 channel exporters. Zero exposure to offline dictionary attacks.</p>
+        </article>
+
+        <!-- Feature 3 -->
+        <article class="feature-card">
+          <div class="card-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+              <polyline points="9 12 11 14 15 10"></polyline>
+            </svg>
+          </div>
+          <h3 class="card-title">BLAKE3 Cryptographic Receipts</h3>
+          <p class="card-desc">End-to-end streaming integrity hash computed on the fly. The receiving peer verifies the entire payload and returns an authenticated cryptographic delivery receipt.</p>
+        </article>
+
+        <!-- Feature 4 -->
+        <article class="feature-card">
+          <div class="card-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+          </div>
+          <h3 class="card-title">Atomic No-Clobber Storage</h3>
+          <p class="card-desc">Files are written to temporary hidden parts and renamed atomically upon verification. Existing files are preserved automatically (<code>file (1).ext</code>). Interrupted transfers leave zero residue.</p>
+        </article>
+
+        <!-- Feature 5 -->
+        <article class="feature-card">
+          <div class="card-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+            </svg>
+          </div>
+          <h3 class="card-title">100% Safe Rust Core</h3>
+          <p class="card-desc">Built with <code>#![forbid(unsafe_code)]</code> across all crates. Zero unsafe memory manipulation, zero Clippy warnings, audited against concurrent races and panic vectors.</p>
+        </article>
+
+        <!-- Feature 6 -->
+        <article class="feature-card">
+          <div class="card-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+          </div>
+          <h3 class="card-title">True Cross-Platform</h3>
+          <p class="card-desc">Tested continuously across Linux (x86_64, aarch64), macOS (Apple Silicon, Intel), and Windows. Single static binary with zero external runtime dependencies.</p>
+        </article>
+      </div>
+
+      <!-- Architecture Showcase Banner -->
+      <div class="arch-banner">
+        <div class="arch-content">
+          <span class="arch-badge">WSP/2 Architecture</span>
+          <h3 class="arch-heading">Inspect the Full Interactive Architecture</h3>
+          <p class="arch-desc">
+            Explore our standalone, validated system architecture diagram. Trace packet motion across all 5 protocol stages: Ephemeral mDNS discovery, QUIC TLS 1.3 handshake, SPAKE2 key confirmation, streaming BLAKE3 verification, and atomic storage receipts.
+          </p>
+          <div class="arch-actions">
+            <a href="architecture/wisp-architecture.html" class="btn-primary">
+              <span>Open Architecture Explorer</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="7" y1="17" x2="17" y2="7"></line>
+                <polyline points="7 7 17 7 17 17"></polyline>
+              </svg>
+            </a>
+            <a href="https://github.com/YohannHommet/wisp/blob/develop/docs/THREAT_MODEL.md" target="_blank" rel="noopener noreferrer" class="btn-secondary">
+              <span>Threat Model & Audit Report</span>
+            </a>
+          </div>
+        </div>
+
+        <div class="arch-preview-card" aria-hidden="true">
+          <div class="flow-step">
+            <div class="flow-num">1</div>
+            <div><strong>Discovery:</strong> mDNS UDP Multicast</div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">2</div>
+            <div><strong>Transport:</strong> Quinn QUIC TLS 1.3</div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">3</div>
+            <div><strong>Auth:</strong> SPAKE2 Channel Exporter</div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">4</div>
+            <div><strong>Stream:</strong> Zero-Copy BLAKE3 Wire</div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">5</div>
+            <div><strong>Receipt:</strong> Atomic Sync & Persistence</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Installation Section -->
+    <section class="install-section container" id="install">
+      <div class="section-title-wrapper">
+        <span class="section-pill">Installation & Setup</span>
+        <h2 class="section-heading">Ready in under thirty seconds.</h2>
+        <p class="section-subheading">Choose your preferred installation method. Install on both sending and receiving machines.</p>
+      </div>
+
+      <div class="tabs-container">
+        <div class="tabs-nav" role="tablist">
+          <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-cargo" id="btn-tab-cargo" onclick="switchTab('cargo')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+            </svg>
+            <span>Cargo (Rust)</span>
+          </button>
+          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-script" id="btn-tab-script" onclick="switchTab('script')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="4 17 10 11 4 5"></polyline>
+              <line x1="12" y1="19" x2="20" y2="19"></line>
+            </svg>
+            <span>One-Line Script</span>
+          </button>
+          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-source" id="btn-tab-source" onclick="switchTab('source')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="4"></circle>
+              <line x1="1.05" y1="12" x2="7" y2="12"></line>
+              <line x1="17.01" y1="12" x2="22.96" y2="12"></line>
+            </svg>
+            <span>From Source</span>
+          </button>
+        </div>
+
+        <!-- Tab 1: Cargo -->
+        <div class="tab-pane active" id="tab-cargo" role="tabpanel" aria-labelledby="btn-tab-cargo">
+          <p class="pane-description" style="margin-bottom: 12px;">Install directly from this repository checkout using standard Rust toolchain:</p>
+          <div class="code-box">
+            <code>cargo install --locked --path crates/wisp-cli<br>wisp --version</code>
+            <button class="code-copy-btn" onclick="copySnippet('cargo install --locked --path crates/wisp-cli\nwisp --version', this)">Copy</button>
+          </div>
+          <p class="pane-description">Requires Rust 1.88.0 or newer. Compiles optimized native binary directly into your <code>~/.cargo/bin</code> path.</p>
+        </div>
+
+        <!-- Tab 2: Script -->
+        <div class="tab-pane" id="tab-script" role="tabpanel" aria-labelledby="btn-tab-script">
+          <p class="pane-description" style="margin-bottom: 12px;"><strong>Linux & macOS:</strong> One-line checksum-verified installer:</p>
+          <div class="code-box">
+            <code>curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash</code>
+            <button class="code-copy-btn" onclick="copySnippet('curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash', this)">Copy</button>
+          </div>
+          <p class="pane-description" style="margin-bottom: 12px;"><strong>Windows PowerShell:</strong></p>
+          <div class="code-box">
+            <code>irm https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.ps1 | iex</code>
+            <button class="code-copy-btn" onclick="copySnippet('irm https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.ps1 | iex', this)">Copy</button>
+          </div>
+        </div>
+
+        <!-- Tab 3: Source -->
+        <div class="tab-pane" id="tab-source" role="tabpanel" aria-labelledby="btn-tab-source">
+          <p class="pane-description" style="margin-bottom: 12px;">Clone and build locally with test validation:</p>
+          <div class="code-box">
+            <code>git clone https://github.com/YohannHommet/wisp.git<br>cd wisp<br>make build<br>make test</code>
+            <button class="code-copy-btn" onclick="copySnippet('git clone https://github.com/YohannHommet/wisp.git && cd wisp && make build && make test', this)">Copy</button>
+          </div>
+          <p class="pane-description">Includes the 7 automated end-to-end scenarios with <code>make demo</code> and interactive TMUX split-screen with <code>make demo-tmux</code>.</p>
+        </div>
+      </div>
+
+      <!-- CLI Reference Cheatsheet -->
+      <div class="cli-table-wrapper" id="cheatsheet">
+        <table class="cli-table">
+          <thead>
+            <tr>
+              <th>Task / Requirement</th>
+              <th>Command & Options</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Send a file</td>
+              <td><code>wisp send photo.jpg</code></td>
+            </tr>
+            <tr>
+              <td>Receive a file</td>
+              <td><code>wisp recv CODE --dir ~/Downloads</code></td>
+            </tr>
+            <tr>
+              <td>Bypass mDNS (manual IP)</td>
+              <td><code>wisp recv CODE --address 192.168.1.42:51023</code></td>
+            </tr>
+            <tr>
+              <td>Reject oversized files</td>
+              <td><code>wisp recv CODE --max-size 500MiB</code></td>
+            </tr>
+            <tr>
+              <td>Rename file on transfer</td>
+              <td><code>wisp send report.pdf --name "Final Report.pdf"</code></td>
+            </tr>
+            <tr>
+              <td>Machine-readable output</td>
+              <td><code>wisp recv CODE --json</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="site-footer" role="contentinfo">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <div class="brand-group">
+            <div class="logo-mark" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+              </svg>
+            </div>
+            <span class="brand-name">Wisp</span>
+          </div>
+          <p>Zero-cloud, cryptographically verified peer-to-peer LAN file transfers in 100% safe Rust.</p>
+        </div>
+
+        <div class="footer-col">
+          <h4>Documentation</h4>
+          <ul>
+            <li><a href="https://github.com/YohannHommet/wisp/blob/develop/docs/USER_GUIDE.md">User Guide</a></li>
+            <li><a href="architecture/wisp-architecture.html">Architecture Diagram</a></li>
+            <li><a href="https://github.com/YohannHommet/wisp/blob/develop/docs/THREAT_MODEL.md">Threat Model</a></li>
+            <li><a href="https://github.com/YohannHommet/wisp/blob/develop/docs/ADVERSARIAL_AUDIT_REPORT.md">Security Audit</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-col">
+          <h4>Project</h4>
+          <ul>
+            <li><a href="https://github.com/YohannHommet/wisp">GitHub Repository</a></li>
+            <li><a href="https://github.com/YohannHommet/wisp/releases">Releases</a></li>
+            <li><a href="https://github.com/YohannHommet/wisp/blob/develop/CHANGELOG.md">Changelog</a></li>
+            <li><a href="https://github.com/YohannHommet/wisp/blob/develop/LICENSE">MIT License</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-col">
+          <h4>Security</h4>
+          <ul>
+            <li><span style="color: var(--emerald-400); font-weight: 600;">#&#33;[forbid(unsafe_code)]</span></li>
+            <li><span>SPAKE2 RFC 9382</span></li>
+            <li><span>BLAKE3 Integrity</span></li>
+            <li><span>Quinn QUIC TLS 1.3</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="footer-bottom">
+        <div>&copy; 2026 Yohann Hommet. Released under the MIT License.</div>
+        <div style="font-family: var(--font-mono); font-size: 0.75rem;">WSP/2 Protocol · Verified Matrix CI</div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Script for Interactivity -->
+  <script>
+    // Theme Management
+    const themeToggleBtn = document.getElementById('themeToggle');
+    const htmlEl = document.documentElement;
+
+    themeToggleBtn.addEventListener('click', () => {
+      const currentTheme = htmlEl.getAttribute('data-theme');
+      const targetTheme = currentTheme === 'dark' ? 'light' : 'dark';
+      htmlEl.setAttribute('data-theme', targetTheme);
+      localStorage.setItem('wisp-theme', targetTheme);
+    });
+
+    // Restore user theme preference
+    const savedTheme = localStorage.getItem('wisp-theme');
+    if (savedTheme) {
+      htmlEl.setAttribute('data-theme', savedTheme);
+    } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+      htmlEl.setAttribute('data-theme', 'light');
+    }
+
+    // Mobile Menu Drawer
+    const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+    const mobileDrawer = document.getElementById('mobileDrawer');
+
+    if (mobileMenuBtn && mobileDrawer) {
+      mobileMenuBtn.addEventListener('click', () => {
+        const isOpen = mobileDrawer.classList.contains('open');
+        mobileDrawer.classList.toggle('open', !isOpen);
+        mobileMenuBtn.setAttribute('aria-expanded', !isOpen);
+      });
+    }
+
+    function closeMobileMenu() {
+      if (mobileDrawer) {
+        mobileDrawer.classList.remove('open');
+        if (mobileMenuBtn) mobileMenuBtn.setAttribute('aria-expanded', 'false');
+      }
+    }
+
+    // Tabs Switcher
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+        btn.setAttribute('aria-selected', 'false');
+      });
+      document.querySelectorAll('.tab-pane').forEach(pane => {
+        pane.classList.remove('active');
+      });
+
+      const activeBtn = document.getElementById(`btn-tab-${tabId}`);
+      const activePane = document.getElementById(`tab-${tabId}`);
+      if (activeBtn && activePane) {
+        activeBtn.classList.add('active');
+        activeBtn.setAttribute('aria-selected', 'true');
+        activePane.classList.add('active');
+      }
+    }
+
+    // Copy to Clipboard with Visual Feedback
+    function copySnippet(text, btnElement) {
+      navigator.clipboard.writeText(text).then(() => {
+        const originalContent = btnElement.innerHTML;
+        btnElement.innerHTML = `
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--emerald-400)">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          <span style="color: var(--emerald-400)">Copied!</span>
+        `;
+        setTimeout(() => {
+          btnElement.innerHTML = originalContent;
+        }, 2000);
+      });
+    }
+
+    // Dual-Terminal Live Simulation Animation (3 Scenarios)
+    let simTimer = null;
+    let simStep = 0;
+    let simProgress = 0;
+    let isRunning = false;
+    let activeScenario = 'nominal';
+
+    const scenarioData = {
+      nominal: {
+        senderCmd: 'wisp send dataset-2026.tar.gz',
+        receiverCmd: 'wisp recv 71429813-foster-gadget-beacon-prism --dir ~/Downloads',
+        senderLines: [
+          '<span class="dim-text">Discovery: broadcasting ephemeral mDNS beacon...</span>',
+          '<span class="dim-text">File:</span> <strong>dataset-2026.tar.gz</strong> (48.5 MB)',
+          '<span class="dim-text">Receive with:</span>',
+          '<span class="code-highlight">wisp recv 71429813-foster-gadget-beacon-prism</span>',
+          '<span class="dim-text">Peer connected: 192.168.1.55:54120 (QUIC TLS 1.3)</span>',
+          '<span class="dim-text">SPAKE2 authenticated with TLS channel binding ✔</span>',
+          'PROGRESS',
+          '<span class="success-text">✔ Delivered and verified (BLAKE3 receipt signed)</span>'
+        ],
+        receiverLines: [
+          '<span class="dim-text">Discovery: listening for session 71429813...</span>',
+          '<span class="dim-text">Found peer at 192.168.1.42:51023 (14ms)</span>',
+          '<span class="dim-text">Performing mutual SPAKE2 key confirmation...</span>',
+          '<span class="dim-text">Incoming file:</span> <strong>dataset-2026.tar.gz</strong> (48.5 MB)',
+          'PROGRESS',
+          '<span class="dim-text">BLAKE3 checksum: 8f4a1c72...09e8 verified ✔</span>',
+          '<span class="success-text">✔ Saved and verified: ~/Downloads/dataset-2026.tar.gz</span>'
+        ]
+      },
+      noclobber: {
+        senderCmd: 'wisp send report.pdf',
+        receiverCmd: 'wisp recv 94812371-amber-valley-timber-quartz --dir ~/Documents',
+        senderLines: [
+          '<span class="dim-text">Discovery: broadcasting ephemeral mDNS beacon...</span>',
+          '<span class="dim-text">File:</span> <strong>report.pdf</strong> (1.4 MB)',
+          '<span class="dim-text">Receive with:</span>',
+          '<span class="code-highlight">wisp recv 94812371-amber-valley-timber-quartz</span>',
+          '<span class="dim-text">Peer connected: 192.168.1.80:50112 (QUIC TLS 1.3)</span>',
+          '<span class="dim-text">SPAKE2 authenticated with TLS channel binding ✔</span>',
+          'PROGRESS',
+          '<span class="success-text">✔ Delivered and verified: report (1).pdf</span>'
+        ],
+        receiverLines: [
+          '<span class="dim-text">Discovery: listening for session 94812371...</span>',
+          '<span class="dim-text">Found peer at 192.168.1.42:50881 (8ms)</span>',
+          '<span class="dim-text">Performing mutual SPAKE2 key confirmation...</span>',
+          '<span style="color: #fbbf24;">Destination collision: report.pdf exists. Engaging no-clobber protection.</span>',
+          'PROGRESS',
+          '<span class="dim-text">BLAKE3 checksum: 3d18ba99...44a1 verified ✔</span>',
+          '<span class="success-text">✔ Saved as: ~/Documents/report (1).pdf (original preserved)</span>'
+        ]
+      },
+      wrongpin: {
+        senderCmd: 'wisp send confidential-keys.kdbx',
+        receiverCmd: 'wisp recv 38104719-harbor-random-wrong-words',
+        senderLines: [
+          '<span class="dim-text">Discovery: broadcasting ephemeral mDNS beacon...</span>',
+          '<span class="dim-text">File:</span> <strong>confidential-keys.kdbx</strong> (820 KB)',
+          '<span class="dim-text">Receive with:</span>',
+          '<span class="code-highlight">wisp recv 38104719-harbor-glacier-falcon-summit</span>',
+          '<span class="dim-text">Peer connected: 192.168.1.199:58231 (QUIC TLS 1.3)</span>',
+          '<span style="color: #ef4444; font-weight: 700;">✘ SPAKE2 authentication failed: confirmation MAC mismatch!</span>',
+          '<span style="color: #fbbf24;">Session permanently terminated. One-attempt limit enforced (zero leak).</span>',
+          '<span class="dim-text">Sender exiting: security error code 2.</span>'
+        ],
+        receiverLines: [
+          '<span class="dim-text">Discovery: listening for session 38104719...</span>',
+          '<span class="dim-text">Found peer at 192.168.1.42:51900</span>',
+          '<span class="dim-text">Attempting SPAKE2 key confirmation with candidate words...</span>',
+          '<span style="color: #ef4444; font-weight: 700;">✘ Key confirmation rejected by sender!</span>',
+          '<span class="dim-text">Connection dropped by peer. Zero bytes transferred.</span>',
+          '<span class="dim-text">Temporary file dropped: zero disk residue.</span>',
+          '<span style="color: #ef4444;">✘ Transfer aborted: authentication rejected.</span>'
+        ]
+      }
+    };
+
+    function changeScenario(scenarioId) {
+      if (scenarioData[scenarioId]) {
+        activeScenario = scenarioId;
+        resetSimulation();
+        updateScenarioContent();
+        toggleSimulation();
+      }
+    }
+
+    function updateScenarioContent() {
+      const data = scenarioData[activeScenario];
+      document.getElementById('s-cmd-text').textContent = data.senderCmd;
+      document.getElementById('r-cmd-text').textContent = data.receiverCmd;
+
+      // Update lines
+      for (let i = 1; i <= 8; i++) {
+        const sEl = document.getElementById(`s-line-${i}`);
+        if (sEl && data.senderLines[i - 1] !== 'PROGRESS') {
+          sEl.innerHTML = data.senderLines[i - 1] || '';
+        }
+      }
+      for (let j = 1; j <= 7; j++) {
+        const rEl = document.getElementById(`r-line-${j}`);
+        if (rEl && data.receiverLines[j - 1] !== 'PROGRESS') {
+          rEl.innerHTML = data.receiverLines[j - 1] || '';
+        }
+      }
+    }
+
+    function resetSimulation() {
+      clearTimeout(simTimer);
+      isRunning = false;
+      simStep = 0;
+      simProgress = 0;
+
+      for (let i = 1; i <= 8; i++) {
+        const el = document.getElementById(`s-line-${i}`);
+        if (el) el.classList.remove('visible');
+      }
+      for (let j = 1; j <= 7; j++) {
+        const el = document.getElementById(`r-line-${j}`);
+        if (el) el.classList.remove('visible');
+      }
+
+      const sProg = document.getElementById('senderProgress');
+      const rProg = document.getElementById('receiverProgress');
+      if (sProg) sProg.style.width = '0%';
+      if (rProg) rProg.style.width = '0%';
+
+      const sRate = document.getElementById('senderRate');
+      const rRate = document.getElementById('receiverRate');
+      if (sRate) sRate.textContent = 'Streaming...';
+      if (rRate) rRate.textContent = 'Receiving...';
+
+      const playText = document.getElementById('playText');
+      if (playText) playText.textContent = 'Play';
+    }
+
+    function runSimulationStep() {
+      simStep++;
+      if (activeScenario === 'wrongpin') {
+        // Scenario 3: Wrong PIN
+        if (simStep === 1) {
+          showLine('s-line-1');
+          showLine('s-line-2');
+          simTimer = setTimeout(runSimulationStep, 600);
+        } else if (simStep === 2) {
+          showLine('s-line-3');
+          showLine('s-line-4');
+          simTimer = setTimeout(runSimulationStep, 800);
+        } else if (simStep === 3) {
+          showLine('r-line-1');
+          showLine('r-line-2');
+          simTimer = setTimeout(runSimulationStep, 600);
+        } else if (simStep === 4) {
+          showLine('s-line-5');
+          showLine('r-line-3');
+          simTimer = setTimeout(runSimulationStep, 700);
+        } else if (simStep === 5) {
+          showLine('s-line-6');
+          showLine('r-line-4');
+          simTimer = setTimeout(runSimulationStep, 700);
+        } else if (simStep === 6) {
+          showLine('s-line-7');
+          showLine('r-line-5');
+          showLine('r-line-6');
+          simTimer = setTimeout(runSimulationStep, 600);
+        } else if (simStep === 7) {
+          showLine('s-line-8');
+          showLine('r-line-7');
+          isRunning = false;
+          document.getElementById('playText').textContent = 'Replay';
+        }
+        return;
+      }
+
+      // Scenarios 1 & 2 (Nominal and No-Clobber)
+      if (simStep === 1) {
+        showLine('s-line-1');
+        showLine('s-line-2');
+        simTimer = setTimeout(runSimulationStep, 600);
+      } else if (simStep === 2) {
+        showLine('s-line-3');
+        showLine('s-line-4');
+        simTimer = setTimeout(runSimulationStep, 800);
+      } else if (simStep === 3) {
+        showLine('r-line-1');
+        showLine('r-line-2');
+        simTimer = setTimeout(runSimulationStep, 600);
+      } else if (simStep === 4) {
+        showLine('s-line-5');
+        showLine('s-line-6');
+        showLine('r-line-3');
+        showLine('r-line-4');
+        simTimer = setTimeout(runSimulationStep, 800);
+      } else if (simStep === 5) {
+        showLine('s-line-7');
+        showLine('r-line-5');
+        animateTransfer();
+      }
+    }
+
+    function animateTransfer() {
+      if (simProgress < 100) {
+        simProgress += 4;
+        if (simProgress > 100) simProgress = 100;
+
+        document.getElementById('senderProgress').style.width = `${simProgress}%`;
+        document.getElementById('receiverProgress').style.width = `${simProgress}%`;
+
+        const rate = (110 + Math.random() * 8).toFixed(1);
+        document.getElementById('senderRate').textContent = `${simProgress}% · ${rate} MB/s · 0.4s left`;
+        document.getElementById('receiverRate').textContent = `${simProgress}% · ${rate} MB/s`;
+
+        simTimer = setTimeout(animateTransfer, 50);
+      } else {
+        showLine('r-line-6');
+        showLine('r-line-7');
+        showLine('s-line-8');
+        isRunning = false;
+        document.getElementById('playText').textContent = 'Replay';
+      }
+    }
+
+    function showLine(id) {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('visible');
+    }
+
+    function toggleSimulation() {
+      if (isRunning) {
+        clearTimeout(simTimer);
+        isRunning = false;
+        document.getElementById('playText').textContent = 'Resume';
+      } else {
+        if (simStep === 0 || simProgress >= 100 || (activeScenario === 'wrongpin' && simStep >= 7)) {
+          resetSimulation();
+        }
+        isRunning = true;
+        document.getElementById('playText').textContent = 'Pause';
+        runSimulationStep();
+      }
+    }
+
+    // Auto-start simulation when scrolled into view
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting && !isRunning && simStep === 0) {
+          toggleSimulation();
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.3 });
+
+    const simEl = document.getElementById('simulator');
+    if (simEl) observer.observe(simEl);
+
+    // Initial content setup
+    updateScenarioContent();
+  </script>
+</body>
+</html>

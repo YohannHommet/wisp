@@ -49,10 +49,14 @@ pub fn make_server_config() -> Result<ServerSetup> {
 
     let quic = QuicServerConfig::try_from(crypto).context("quic server config")?;
     let mut config = ServerConfig::with_crypto(Arc::new(quic));
+    config.max_incoming(1);
+    config.incoming_buffer_size(64 * 1024);
+    config.incoming_buffer_size_total(64 * 1024);
 
     let mut transport = TransportConfig::default();
     transport.max_concurrent_uni_streams(0u8.into());
     transport.max_concurrent_bidi_streams(1u8.into());
+    transport.datagram_receive_buffer_size(None);
     transport.keep_alive_interval(Some(std::time::Duration::from_secs(5)));
     transport.max_idle_timeout(Some(std::time::Duration::from_secs(60).try_into()?));
     config.transport_config(Arc::new(transport));
@@ -86,6 +90,7 @@ pub fn make_client_config(expected_fingerprint: Option<[u8; 32]>) -> Result<Clie
     let mut transport = TransportConfig::default();
     transport.max_concurrent_uni_streams(0u8.into());
     transport.max_concurrent_bidi_streams(1u8.into());
+    transport.datagram_receive_buffer_size(None);
     transport.keep_alive_interval(Some(std::time::Duration::from_secs(5)));
     transport.max_idle_timeout(Some(std::time::Duration::from_secs(60).try_into()?));
     config.transport_config(Arc::new(transport));
@@ -155,5 +160,73 @@ impl ServerCertVerifier for PinnedVerifier {
         self.provider
             .signature_verification_algorithms
             .supported_schemes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quinn::Endpoint;
+    use std::time::Duration;
+
+    fn endpoints() -> (Endpoint, Endpoint) {
+        let setup = make_server_config().unwrap();
+        let server = Endpoint::server(setup.config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let mut client = Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        client.set_default_client_config(make_client_config(Some(setup.fingerprint)).unwrap());
+        (server, client)
+    }
+
+    #[tokio::test]
+    async fn stream_only_protocol_does_not_negotiate_datagrams() {
+        let (server, client) = endpoints();
+        let (sender, receiver) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                async { server.accept().await.unwrap().await.unwrap() },
+                async {
+                    client
+                        .connect(server.local_addr().unwrap(), "wisp")
+                        .unwrap()
+                        .await
+                        .unwrap()
+                }
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(sender.max_datagram_size(), None);
+        assert_eq!(receiver.max_datagram_size(), None);
+    }
+
+    #[tokio::test]
+    async fn refuses_additional_pending_connection_attempts() {
+        let (server, client) = endpoints();
+        let first = client
+            .connect(server.local_addr().unwrap(), "wisp")
+            .unwrap();
+        // Keep the first Incoming alive without accepting: later peers must not queue.
+        let pending = tokio::time::timeout(Duration::from_secs(5), server.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut second = client
+            .connect(server.local_addr().unwrap(), "wisp")
+            .unwrap();
+        // With max_incoming(1), second initial is dropped; no second Incoming reaches the application.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), server.accept())
+                .await
+                .is_err(),
+            "no second incoming should reach application while slot is held"
+        );
+        // The second connection remains unestablished.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), &mut second)
+                .await
+                .is_err(),
+            "second connection must not complete while incoming buffer is saturated"
+        );
+        drop(pending);
+        drop(first);
     }
 }

@@ -101,7 +101,14 @@ fn terminal_text(value: &str) -> String {
     let mut safe = String::with_capacity(value.len());
     for character in value.chars() {
         if character.is_control()
-            || matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+            || matches!(
+                character,
+                '\u{200e}'
+                    | '\u{200f}'
+                    | '\u{061c}'
+                    | '\u{202a}'..='\u{202e}'
+                    | '\u{2066}'..='\u{2069}'
+            )
         {
             safe.extend(character.escape_default());
         } else {
@@ -233,14 +240,15 @@ impl Output {
                     writeln!(
                         out,
                         "Saved and verified: {} ({} bytes)",
-                        path.display(),
+                        terminal_text(&path.display().to_string()),
                         receipt.size
                     )
                 } else {
                     writeln!(
                         out,
                         "Delivered and verified: {} ({} bytes)",
-                        receipt.name, receipt.size
+                        terminal_text(&receipt.name),
+                        receipt.size
                     )
                 }
             });
@@ -403,6 +411,10 @@ mod tests {
         assert_eq!(
             terminal_text("peer\u{1b}[2J\n\u{202e}txt"),
             "peer\\u{1b}[2J\\n\\u{202e}txt"
+        );
+        assert_eq!(
+            terminal_text("file\u{200e}\u{200f}\u{061c}.txt"),
+            "file\\u{200e}\\u{200f}\\u{61c}.txt"
         );
         assert_eq!(terminal_text("éclair"), "éclair");
     }

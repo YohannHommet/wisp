@@ -4,6 +4,36 @@ use tokio::sync::oneshot;
 fn silent() -> EventHandler {
     Arc::new(|_| {})
 }
+
+#[tokio::test]
+#[ignore = "manual warm-cache source preparation benchmark; run in release mode"]
+async fn benchmark_source_preparation() {
+    use std::io::Write;
+    let source = tempfile::tempdir().unwrap();
+    let path = source.path().join("benchmark.bin");
+    let block = vec![0x5a; 1024 * 1024];
+    let mut file = std::fs::File::create(&path).unwrap();
+    let mut expected = blake3::Hasher::new();
+    for _ in 0..64 {
+        file.write_all(&block).unwrap();
+        expected.update(&block);
+    }
+    drop(file);
+    let options = SendOptions::new(path);
+    let mut timings = Vec::new();
+    for _ in 0..5 {
+        let start = Instant::now();
+        let prepared = PreparedFile::open(&options, &silent()).await.unwrap();
+        timings.push(start.elapsed());
+        assert_eq!(prepared.meta.size, 64 * 1024 * 1024);
+        assert_eq!(prepared.meta.hash, expected.finalize().to_hex().as_str());
+    }
+    timings.sort();
+    eprintln!(
+        "64 MiB source preparation median: {:?}; samples: {timings:?}",
+        timings[2]
+    );
+}
 fn limits() -> Timeouts {
     Timeouts {
         pake: 1,
@@ -348,4 +378,114 @@ async fn sender_cannot_block_receiver_before_authentication() {
     assert!(format!("{error:#}").contains("did not allow authentication"));
     peer.abort();
     let _ = peer.await;
+}
+
+#[tokio::test]
+async fn receipt_validation_rejects_bidi_controls_and_marks() {
+    for bidi in ["data\u{202e}txt", "data\u{200e}.txt", "data\u{061c}.txt"] {
+        let (sc, cc) = connections().await;
+        let code = PairingCode::generate();
+        let payload = b"hello";
+        let hash = blake3::hash(payload).to_hex().to_string();
+        let source_dir = tempfile::tempdir().unwrap();
+        let file_path = source_dir.path().join("source.bin");
+        std::fs::write(&file_path, payload).unwrap();
+        let mut source = PreparedFile::open(&SendOptions::new(file_path), &silent())
+            .await
+            .unwrap();
+        let sender_code = code.clone();
+        let sender = tokio::spawn(async move {
+            let (mut s, mut r) = sc.accept_bi().await.unwrap();
+            sender_protocol(
+                &sender_code,
+                &mut source,
+                &mut s,
+                &mut r,
+                &channel_binding(&sc).unwrap(),
+                &limits(),
+                &silent(),
+            )
+            .await
+        });
+        let (mut s, mut r) = cc.open_bi().await.unwrap();
+        pake::receiver_handshake(
+            code.expose(),
+            &mut s,
+            &mut r,
+            &channel_binding(&cc).unwrap(),
+        )
+        .await
+        .unwrap();
+        s.write_all(b"GET").await.unwrap();
+        let _meta: FileMeta = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
+        let mut buf = vec![0u8; payload.len()];
+        r.read_exact(&mut buf).await.unwrap();
+        write_frame(
+            &mut s,
+            &VerifiedReceipt {
+                name: bidi.into(),
+                size: payload.len() as u64,
+                hash: hash.clone(),
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        s.finish().unwrap();
+        let result = sender.await.unwrap();
+        assert!(result.is_err());
+        assert!(format!("{:#}", result.unwrap_err()).contains("invalid delivery receipt"));
+    }
+}
+
+#[tokio::test]
+async fn pre_authentication_transport_drop_allows_retry_then_succeeds() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let file_path = source_dir.path().join("source.txt");
+    std::fs::write(&file_path, b"wisp retry test").unwrap();
+
+    let (tx_ready, rx_ready) = oneshot::channel();
+    let tx_ready = std::sync::Mutex::new(Some(tx_ready));
+    let events: EventHandler = Arc::new(move |event| {
+        if let Event::Ready { code, address, .. } = event {
+            if let Some(tx) = tx_ready.lock().unwrap().take() {
+                let _ = tx.send((code, address));
+            }
+        }
+    });
+
+    let mut send_opts = SendOptions::new(file_path);
+    send_opts.discovery = false;
+    send_opts.bind = Some("127.0.0.1".parse().unwrap());
+    send_opts.port = 0;
+    send_opts.timeouts = limits();
+
+    let sender = tokio::spawn(send_file(send_opts, events));
+
+    let (code_str, address) = tokio::time::timeout(Duration::from_secs(3), rx_ready)
+        .await
+        .unwrap()
+        .unwrap();
+    let code: PairingCode = code_str.parse().unwrap();
+
+    // 1st connection: connects, then drops without opening a stream or PAKE
+    {
+        let mut client = Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        client.set_default_client_config(transport::make_client_config(None).unwrap());
+        let conn = client.connect(address, "wisp").unwrap().await.unwrap();
+        conn.close(0u32.into(), b"abrupt drop before pake");
+    }
+
+    // 2nd connection: legitimate receiver
+    let dest_dir = tempfile::tempdir().unwrap();
+    let mut recv_opts = ReceiveOptions::new(code, dest_dir.path().into());
+    recv_opts.address = Some(address);
+    recv_opts.timeouts = limits();
+
+    let receipt = receive_file(recv_opts, silent()).await.unwrap();
+    assert_eq!(receipt.name, "source.txt");
+    assert_eq!(receipt.size, 15);
+
+    let sender_receipt = sender.await.unwrap().unwrap();
+    assert_eq!(sender_receipt.name, "source.txt");
 }

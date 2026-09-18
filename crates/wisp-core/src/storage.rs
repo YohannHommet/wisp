@@ -7,6 +7,12 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
+#[derive(Debug)]
+pub(crate) struct PublishedFile {
+    pub path: PathBuf,
+    pub sync_warning: Option<String>,
+}
+
 pub(crate) struct PendingFile {
     writer: BufWriter<NamedTempFile>,
     dir: PathBuf,
@@ -33,7 +39,7 @@ impl PendingFile {
 
     /// No await between verification and publication: cancellation cannot orphan a commit task.
     /// Synchronous bounded writes also ensure the file handle closes before its cleanup guard.
-    pub fn commit(mut self, name: &str) -> Result<PathBuf> {
+    pub fn commit(mut self, name: &str) -> Result<PublishedFile> {
         self.writer.flush().context("flushing received file")?;
         self.writer
             .get_ref()
@@ -47,16 +53,24 @@ impl PendingFile {
             match temp.persist_noclobber(&path) {
                 Ok(file) => {
                     drop(file);
+                    let mut sync_warning = None;
                     #[cfg(unix)]
-                    std::fs::File::open(&self.dir)?
-                        .sync_all()
-                        .with_context(|| {
-                            format!(
-                                "file saved at {}, but syncing its directory failed",
+                    {
+                        if let Ok(dir_file) = std::fs::File::open(&self.dir) {
+                            if let Err(err) = dir_file.sync_all() {
+                                sync_warning = Some(format!(
+                                    "file saved at {}, but syncing its directory failed: {err}",
+                                    path.display()
+                                ));
+                            }
+                        } else {
+                            sync_warning = Some(format!(
+                                "file saved at {}, but opening its directory for sync failed",
                                 path.display()
-                            )
-                        })?;
-                    return Ok(path);
+                            ));
+                        }
+                    }
+                    return Ok(PublishedFile { path, sync_warning });
                 }
                 Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => {
                     temp = err.file
@@ -91,7 +105,14 @@ pub fn sanitize(name: &str) -> String {
         .map(|c| {
             if c.is_control()
                 || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')
-                || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+                || matches!(
+                    c,
+                    '\u{200e}'
+                        | '\u{200f}'
+                        | '\u{061c}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
             {
                 '_'
             } else {
@@ -119,7 +140,7 @@ pub fn sanitize(name: &str) -> String {
         .to_ascii_uppercase();
     if matches!(
         stem.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" | "CLOCK$"
     ) || ["COM", "LPT"].iter().any(|prefix| {
         stem.strip_prefix(prefix).is_some_and(|n| {
             matches!(
@@ -142,6 +163,8 @@ mod tests {
             ("../../file.txt", "file.txt"),
             ("C:\\temp\\file.txt", "file.txt"),
             ("NUL.txt", "_NUL.txt"),
+            ("CLOCK$.txt", "_CLOCK$.txt"),
+            ("\u{200e}file.txt", "_file.txt"),
             ("con.foo.bar", "_con.foo.bar"),
             ("LPT1", "_LPT1"),
             ("... ", "file"),
@@ -161,8 +184,16 @@ mod tests {
         let mut b = PendingFile::create(dir.path()).unwrap();
         a.write(b"first").unwrap();
         b.write(b"second").unwrap();
-        assert!(a.commit("report.txt").unwrap().ends_with("report (1).txt"));
-        assert!(b.commit("report.txt").unwrap().ends_with("report (2).txt"));
+        assert!(a
+            .commit("report.txt")
+            .unwrap()
+            .path
+            .ends_with("report (1).txt"));
+        assert!(b
+            .commit("report.txt")
+            .unwrap()
+            .path
+            .ends_with("report (2).txt"));
         assert_eq!(
             std::fs::read(dir.path().join("report.txt")).unwrap(),
             b"original"
@@ -192,7 +223,7 @@ mod tests {
                 & 0o777,
             0o600
         );
-        assert!(pending.commit("file").unwrap().ends_with("file (1)"));
+        assert!(pending.commit("file").unwrap().path.ends_with("file (1)"));
         assert!(dir.path().join("file").is_symlink());
     }
 }

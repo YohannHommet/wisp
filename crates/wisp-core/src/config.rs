@@ -59,16 +59,25 @@ impl Config {
     }
 
     pub fn load(path: &Path, required: bool) -> Result<Self> {
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
+        const MAX_CONFIG_SIZE: u64 = 64 * 1024;
+        let file = match std::fs::File::open(path) {
+            Ok(file) => file,
             Err(err) if !required && err.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default())
+                return Ok(Self::default());
             }
             Err(err) => {
                 return Err(err)
-                    .with_context(|| format!("reading configuration {}", path.display()))
+                    .with_context(|| format!("reading configuration {}", path.display()));
             }
         };
+        use std::io::Read;
+        let mut text = String::new();
+        file.take(MAX_CONFIG_SIZE + 1)
+            .read_to_string(&mut text)
+            .with_context(|| format!("reading configuration {}", path.display()))?;
+        if text.len() > MAX_CONFIG_SIZE as usize {
+            bail!("configuration file {} exceeds 64 KiB limit", path.display());
+        }
         let config: Self = toml::from_str(&text).with_context(|| format!(
             "invalid configuration {}; Wisp 0.2 supports default_download_dir and timeouts only (remove legacy relay/trusted_peers settings)", path.display()))?;
         config.timeouts.validate()?;
@@ -106,6 +115,13 @@ mod tests {
             std::fs::write(&path, text).unwrap();
             assert!(Config::load(&path, false).is_err());
         }
+    }
+    #[test]
+    fn config_size_cap_rejects_large_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "a".repeat(65 * 1024)).unwrap();
+        assert!(Config::load(&path, true).is_err());
     }
     #[test]
     fn partial_config_keeps_defaults_and_explicit_directory_wins() {

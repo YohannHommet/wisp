@@ -22,6 +22,8 @@ use tokio::{
 };
 
 const CHUNK: usize = 64 * 1024;
+// Amortize Tokio's blocking-file handoff while keeping preparation memory bounded.
+const HASH_CHUNK: usize = 256 * 1024;
 const MAX_FRAME: usize = 4096;
 pub const MAX_FILE_SIZE: u64 = 1 << 40;
 
@@ -169,7 +171,7 @@ impl PreparedFile {
         }));
         events(Event::Preparing { name: name.clone() });
         let mut hasher = blake3::Hasher::new();
-        let mut buffer = vec![0; CHUNK];
+        let mut buffer = vec![0; HASH_CHUNK];
         let mut size = 0;
         loop {
             let n = file
@@ -238,43 +240,107 @@ pub async fn send_file(options: SendOptions, events: EventHandler) -> Result<Tra
         size: source.meta.size,
     });
 
-    let incoming = tokio::time::timeout(Duration::from_secs(options.timeouts.wait), async {
-        loop {
-            let incoming = endpoint.accept().await.context("sender endpoint closed")?;
-            if !incoming.remote_address_validated() {
-                incoming
-                    .retry()
-                    .context("validating the receiver's network address")?;
+    const MAX_PRE_AUTH_RETRIES: usize = 3;
+    let mut pre_auth_retries = 0;
+    let deadline = Instant::now() + Duration::from_secs(options.timeouts.wait);
+
+    let (conn, mut send, mut recv) = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            bail!("code expired while waiting for a receiver; run send again for a fresh code");
+        }
+        let incoming = match tokio::time::timeout(remaining, async {
+            loop {
+                let incoming = endpoint.accept().await.context("sender endpoint closed")?;
+                if !incoming.remote_address_validated() {
+                    incoming
+                        .retry()
+                        .context("validating the receiver's network address")?;
+                    continue;
+                }
+                return Ok::<_, anyhow::Error>(incoming);
+            }
+        })
+        .await
+        {
+            Ok(Ok(incoming)) => incoming,
+            Ok(Err(err)) => return Err(err),
+            Err(_) => {
+                bail!("code expired while waiting for a receiver; run send again for a fresh code");
+            }
+        };
+
+        let conn = match tokio::time::timeout(Duration::from_secs(options.timeouts.pake), incoming)
+            .await
+        {
+            Ok(Ok(conn)) => conn,
+            Ok(Err(err)) => {
+                pre_auth_retries += 1;
+                if pre_auth_retries >= MAX_PRE_AUTH_RETRIES {
+                    bail!("connection handshake failed: {err:#}; exceeded pre-auth retry limit");
+                }
+                events(Event::Warning {
+                    message: format!(
+                        "connection handshake failed before authentication ({err:#}); waiting for receiver"
+                    ),
+                });
                 continue;
             }
-            return Ok::<_, anyhow::Error>(incoming);
+            Err(_) => {
+                pre_auth_retries += 1;
+                if pre_auth_retries >= MAX_PRE_AUTH_RETRIES {
+                    bail!("connection handshake timed out; exceeded pre-auth retry limit");
+                }
+                events(Event::Warning {
+                    message:
+                        "connection handshake timed out before authentication; waiting for receiver"
+                            .into(),
+                });
+                continue;
+            }
+        };
+
+        match tokio::time::timeout(Duration::from_secs(options.timeouts.pake), conn.accept_bi())
+            .await
+        {
+            Ok(Ok((send, recv))) => break (conn, send, recv),
+            Ok(Err(err)) => {
+                pre_auth_retries += 1;
+                if pre_auth_retries >= MAX_PRE_AUTH_RETRIES {
+                    bail!("receiver did not open a stream: {err:#}; exceeded pre-auth retry limit");
+                }
+                events(Event::Warning {
+                    message: format!(
+                        "receiver disconnected before opening a stream ({err:#}); waiting for receiver"
+                    ),
+                });
+                continue;
+            }
+            Err(_) => {
+                pre_auth_retries += 1;
+                if pre_auth_retries >= MAX_PRE_AUTH_RETRIES {
+                    bail!("receiver stream opening timed out; exceeded pre-auth retry limit");
+                }
+                events(Event::Warning {
+                    message: "receiver stream opening timed out; waiting for receiver".into(),
+                });
+                continue;
+            }
         }
-    })
-    .await
-    .context("code expired while waiting for a receiver; run send again for a fresh code")??;
-    // One attempt per code, including failed authentication; no guess-retry oracle.
+    };
+
+    // One attempt per code once authentication begins; no guess-retry oracle.
     drop(advert);
-    let conn = tokio::time::timeout(Duration::from_secs(options.timeouts.pake), incoming)
-        .await
-        .context("connection handshake timed out; run send again")?
-        .context("accepting receiver")?;
-    let result = async {
-        let (mut send, mut recv) =
-            tokio::time::timeout(Duration::from_secs(options.timeouts.pake), conn.accept_bi())
-                .await
-                .context("receiver did not open a stream")??;
-        let binding = channel_binding(&conn)?;
-        sender_protocol(
-            &code,
-            &mut source,
-            &mut send,
-            &mut recv,
-            &binding,
-            &options.timeouts,
-            &events,
-        )
-        .await
-    }
+    let binding = channel_binding(&conn)?;
+    let result = sender_protocol(
+        &code,
+        &mut source,
+        &mut send,
+        &mut recv,
+        &binding,
+        &options.timeouts,
+        &events,
+    )
     .await;
     if result.is_ok() {
         // Receipt is already validated. Allow its transport ACK to reach the receiver
@@ -282,7 +348,7 @@ pub async fn send_file(options: SendOptions, events: EventHandler) -> Result<Tra
         let _ = tokio::time::timeout(Duration::from_secs(3), conn.closed()).await;
     }
     conn.close(0u32.into(), b"session finished");
-    endpoint.wait_idle().await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), endpoint.wait_idle()).await;
     result
 }
 
@@ -337,7 +403,7 @@ pub async fn receive_file(
     }
     .await;
     conn.close(0u32.into(), b"session finished");
-    endpoint.wait_idle().await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), endpoint.wait_idle()).await;
     result
 }
 
@@ -352,8 +418,28 @@ fn endpoint_with_socket(
     )?;
     // Large UDP buffers prevent kernel drops from turning normal reordering into
     // Quinn's bounded-gap transport error on high-throughput LAN transfers.
-    socket.set_recv_buffer_size(16 * 1024 * 1024)?;
-    socket.set_send_buffer_size(16 * 1024 * 1024)?;
+    // Try descending sizes independently and continue with OS defaults if all fail,
+    // ensuring cross-platform compatibility on macOS/BSDs where kern.ipc.maxsockbuf is lower.
+    for size in [
+        16 * 1024 * 1024,
+        8 * 1024 * 1024,
+        4 * 1024 * 1024,
+        1024 * 1024,
+    ] {
+        if socket.set_recv_buffer_size(size).is_ok() {
+            break;
+        }
+    }
+    for size in [
+        16 * 1024 * 1024,
+        8 * 1024 * 1024,
+        4 * 1024 * 1024,
+        1024 * 1024,
+    ] {
+        if socket.set_send_buffer_size(size).is_ok() {
+            break;
+        }
+    }
     socket.bind(&address.into())?;
     Endpoint::new(
         Default::default(),
@@ -433,7 +519,17 @@ async fn sender_protocol(
         || receipt.name.contains(['/', '\\'])
         || receipt.name == "."
         || receipt.name == ".."
-        || receipt.name.chars().any(char::is_control)
+        || receipt.name.chars().any(|c| {
+            c.is_control()
+                || matches!(
+                    c,
+                    '\u{200e}'
+                        | '\u{200f}'
+                        | '\u{061c}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
+        })
     {
         bail!("invalid delivery receipt; transfer not confirmed");
     }
@@ -509,7 +605,11 @@ async fn receiver_protocol(
     if hash.finalize().to_hex().as_str() != meta.hash {
         bail!("file integrity check failed; temporary file removed");
     }
-    let path = pending.commit(&meta.name)?;
+    let published = pending.commit(&meta.name)?;
+    if let Some(warning) = published.sync_warning {
+        events(Event::Warning { message: warning });
+    }
+    let path = published.path;
     let name = path
         .file_name()
         .context("saved path has no filename")?

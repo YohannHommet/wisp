@@ -1,4 +1,4 @@
-.PHONY: help build install test check fmt clippy discovery run clean
+.PHONY: help build install test check fmt clippy discovery run demo demo-tmux clean
 
 help:
 	@printf '%s\n' \
@@ -9,6 +9,8 @@ help:
 		'make fmt        Check Rust formatting' \
 		'make clippy     Run Clippy with warnings denied' \
 		'make discovery  Run the multicast discovery test' \
+		'make demo       Run automated E2E validation scenarios' \
+		'make demo-tmux  Launch interactive dual-terminal demo in tmux' \
 		'make run ARGS="--help"  Run wisp from the checkout' \
 		'make clean      Remove generated Cargo build files'
 
@@ -34,6 +36,12 @@ discovery:
 
 run:
 	cargo run --locked --bin wisp -- $(ARGS)
+
+demo:
+	./scripts/demo.sh all
+
+demo-tmux:
+	./scripts/demo.sh tmux
 
 clean:
 	cargo clean

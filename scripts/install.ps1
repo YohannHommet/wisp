@@ -9,7 +9,9 @@ if (-not $Version) {
     $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/YohannHommet/wisp/releases/latest'
     $Version = $release.tag_name
 }
-if ($Version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Version must be a tag such as v0.2.0.' }
+if ($Version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+    throw "No published release tag found at $repo (got '$Version'). Specify an explicit tag with -Version vX.Y.Z, or install from source with Cargo: cargo install --locked --path crates/wisp-cli"
+}
 if (-not $InstallDir) { $InstallDir = Join-Path $env:LOCALAPPDATA 'Wisp\bin' }
 $asset = 'wisp-windows-amd64.exe'
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())

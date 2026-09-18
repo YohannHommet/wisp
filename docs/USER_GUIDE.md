@@ -36,45 +36,62 @@ Windows PowerShell:
 & "$env:USERPROFILE\.cargo\bin\wisp.exe" --version
 ```
 
-### Published release installers
+### One-line installer (Recommended for pre-built binaries)
 
-These scripts download a **published release** and its `SHA256SUMS`, verify the binary, and install it in your user directory. They do not install your local build. Use source installation if the matching CLI release is unavailable. Run them from the repository root:
+Install or update Wisp directly from the official repository with a single command. The installer automatically detects your operating system and CPU architecture, downloads the release binary alongside its `SHA256SUMS`, strictly verifies the cryptographic hash, and atomically replaces the binary in your user directory.
 
-Linux/macOS (requires `curl` and `sha256sum` or `shasum`):
-
-```sh
-bash scripts/install.sh
-"$HOME/.local/bin/wisp" --version
-```
-
-Windows x64, in PowerShell:
-
-```powershell
-.\scripts\install.ps1
-& "$env:LOCALAPPDATA\Wisp\bin\wisp.exe" --version
-```
-
-By default, the scripts select the latest published release. To choose a specific published tag, use `WISP_VERSION` on Unix or `-Version` in PowerShell; `v0.2.0` below is an example and must exist as a published release:
+**Linux & macOS** (x86_64, ARM64 / Apple Silicon):
 
 ```sh
-WISP_VERSION=v0.2.0 bash scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash
 ```
+
+**Windows PowerShell** (x64):
 
 ```powershell
-.\scripts\install.ps1 -Version v0.2.0
+irm https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.ps1 | iex
 ```
 
-Unix installs into `~/.local/bin`; Windows installs into `%LOCALAPPDATA%\Wisp\bin`. Set `WISP_INSTALL_DIR` to override either location, or use PowerShell's `-InstallDir`. Neither installer changes PATH or needs administrator privileges. To use `wisp` by name in the current terminal:
+#### Security & execution guarantees of the installer:
+- **No root or administrator privileges required**: Installs into `~/.local/bin/wisp` on Linux/macOS and `%LOCALAPPDATA%\Wisp\bin\wisp.exe` on Windows.
+- **Strict SHA-256 validation**: Computes the SHA-256 digest of the downloaded artifact and matches it against `SHA256SUMS`. If the hash does not match or the checksum file is missing, execution aborts immediately with zero modifications to existing files.
+- **Atomic filesystem swap**: Writes to a temporary staging file (`.wisp-install.XXXXXX`) within the destination directory before performing an atomic rename (`mv -f` / `[System.IO.File]::Replace`). A broken network connection or Ctrl+C mid-download never corrupts an existing installation.
+- **Clean permission mask**: Explicitly sets standard executable mode (`0755` on Unix) without making directories world-writable.
 
+#### Customizing installation:
+
+- **Targeting a specific release tag**:
+  ```sh
+  WISP_VERSION=v0.2.0 curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash
+  ```
+  ```powershell
+  $env:WISP_VERSION = "v0.2.0"; irm https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.ps1 | iex
+  ```
+- **Custom installation directory**:
+  ```sh
+  WISP_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash
+  ```
+  ```powershell
+  $env:WISP_INSTALL_DIR = "C:\Tools\bin"; irm https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.ps1 | iex
+  ```
+
+#### Configuring your PATH:
+
+To run `wisp` directly from any terminal session, ensure your user binary directory is included in your system `PATH`:
+
+Linux & macOS:
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
+# To persist across reboots, add to ~/.bashrc or ~/.zshrc:
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 ```
 
+Windows PowerShell:
 ```powershell
 $env:Path = "$env:LOCALAPPDATA\Wisp\bin;$env:Path"
+# To persist for future sessions:
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";$env:LOCALAPPDATA\Wisp\bin", "User")
 ```
-
-For future terminals, add that directory to your shell's PATH configuration or Windows user Path setting. Release targets are Linux x64/ARM64, universal macOS, and Windows x64. Binaries are not code-signed or notarized.
 
 ## Transfer a file
 

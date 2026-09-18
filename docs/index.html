@@ -566,6 +566,25 @@
       border-color: var(--cyan-400);
     }
 
+    .control-select {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      padding: 5px 10px;
+      border-radius: var(--radius-sm);
+      font-family: var(--font-sans);
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+    .control-select:hover {
+      border-color: var(--border-medium);
+    }
+    .control-select:focus-visible {
+      outline: 2px solid var(--cyan-400);
+    }
+
     .terminals-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1340,6 +1359,11 @@
               <span>Wisp Interactive Split-Terminal Simulation</span>
             </div>
             <div class="demo-controls">
+              <select id="scenarioSelector" class="control-select" onchange="changeScenario(this.value)" aria-label="Select Demo Scenario">
+                <option value="nominal">Scenario 1: Nominal Verified Transfer</option>
+                <option value="noclobber">Scenario 2: No-Clobber Collision</option>
+                <option value="wrongpin">Scenario 3: Adversarial Wrong PIN</option>
+              </select>
               <button id="demoPlayBtn" class="control-btn active" onclick="toggleSimulation()">
                 <svg id="playIcon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                   <polygon points="5 3 19 12 5 21 5 3"></polygon>
@@ -1358,9 +1382,9 @@
                 <span class="pane-badge badge-sender">wisp send</span>
               </div>
               <div class="terminal-content" id="senderContent">
-                <div class="terminal-line visible">
+                <div class="terminal-line visible" id="s-cmd-line">
                   <span class="prompt-symbol">❯</span>
-                  <span class="cmd-text">wisp send dataset-2026.tar.gz</span>
+                  <span class="cmd-text" id="s-cmd-text">wisp send dataset-2026.tar.gz</span>
                 </div>
                 <div class="terminal-line" id="s-line-1">
                   <span class="dim-text">Discovery: broadcasting ephemeral mDNS beacon...</span>
@@ -1399,9 +1423,9 @@
                 <span class="pane-badge badge-receiver">wisp recv</span>
               </div>
               <div class="terminal-content" id="receiverContent">
-                <div class="terminal-line visible">
+                <div class="terminal-line visible" id="r-cmd-line">
                   <span class="prompt-symbol">❯</span>
-                  <span class="cmd-text">wisp recv 71429813-foster-gadget-beacon-prism --dir ~/Downloads</span>
+                  <span class="cmd-text" id="r-cmd-text">wisp recv 71429813-foster-gadget-beacon-prism --dir ~/Downloads</span>
                 </div>
                 <div class="terminal-line" id="r-line-1">
                   <span class="dim-text">Discovery: listening for session 71429813...</span>
@@ -1804,20 +1828,113 @@
       });
     }
 
-    // Dual-Terminal Live Simulation Animation
+    // Dual-Terminal Live Simulation Animation (3 Scenarios)
     let simTimer = null;
     let simStep = 0;
     let simProgress = 0;
     let isRunning = false;
+    let activeScenario = 'nominal';
 
-    const senderLines = [
-      's-line-1', 's-line-2', 's-line-3', 's-line-4',
-      's-line-5', 's-line-6', 's-line-7', 's-line-8'
-    ];
-    const receiverLines = [
-      'r-line-1', 'r-line-2', 'r-line-3', 'r-line-4',
-      'r-line-5', 'r-line-6', 'r-line-7'
-    ];
+    const scenarioData = {
+      nominal: {
+        senderCmd: 'wisp send dataset-2026.tar.gz',
+        receiverCmd: 'wisp recv 71429813-foster-gadget-beacon-prism --dir ~/Downloads',
+        senderLines: [
+          '<span class="dim-text">Discovery: broadcasting ephemeral mDNS beacon...</span>',
+          '<span class="dim-text">File:</span> <strong>dataset-2026.tar.gz</strong> (48.5 MB)',
+          '<span class="dim-text">Receive with:</span>',
+          '<span class="code-highlight">wisp recv 71429813-foster-gadget-beacon-prism</span>',
+          '<span class="dim-text">Peer connected: 192.168.1.55:54120 (QUIC TLS 1.3)</span>',
+          '<span class="dim-text">SPAKE2 authenticated with TLS channel binding ✔</span>',
+          'PROGRESS',
+          '<span class="success-text">✔ Delivered and verified (BLAKE3 receipt signed)</span>'
+        ],
+        receiverLines: [
+          '<span class="dim-text">Discovery: listening for session 71429813...</span>',
+          '<span class="dim-text">Found peer at 192.168.1.42:51023 (14ms)</span>',
+          '<span class="dim-text">Performing mutual SPAKE2 key confirmation...</span>',
+          '<span class="dim-text">Incoming file:</span> <strong>dataset-2026.tar.gz</strong> (48.5 MB)',
+          'PROGRESS',
+          '<span class="dim-text">BLAKE3 checksum: 8f4a1c72...09e8 verified ✔</span>',
+          '<span class="success-text">✔ Saved and verified: ~/Downloads/dataset-2026.tar.gz</span>'
+        ]
+      },
+      noclobber: {
+        senderCmd: 'wisp send report.pdf',
+        receiverCmd: 'wisp recv 94812371-amber-valley-timber-quartz --dir ~/Documents',
+        senderLines: [
+          '<span class="dim-text">Discovery: broadcasting ephemeral mDNS beacon...</span>',
+          '<span class="dim-text">File:</span> <strong>report.pdf</strong> (1.4 MB)',
+          '<span class="dim-text">Receive with:</span>',
+          '<span class="code-highlight">wisp recv 94812371-amber-valley-timber-quartz</span>',
+          '<span class="dim-text">Peer connected: 192.168.1.80:50112 (QUIC TLS 1.3)</span>',
+          '<span class="dim-text">SPAKE2 authenticated with TLS channel binding ✔</span>',
+          'PROGRESS',
+          '<span class="success-text">✔ Delivered and verified: report (1).pdf</span>'
+        ],
+        receiverLines: [
+          '<span class="dim-text">Discovery: listening for session 94812371...</span>',
+          '<span class="dim-text">Found peer at 192.168.1.42:50881 (8ms)</span>',
+          '<span class="dim-text">Performing mutual SPAKE2 key confirmation...</span>',
+          '<span style="color: #fbbf24;">Destination collision: report.pdf exists. Engaging no-clobber protection.</span>',
+          'PROGRESS',
+          '<span class="dim-text">BLAKE3 checksum: 3d18ba99...44a1 verified ✔</span>',
+          '<span class="success-text">✔ Saved as: ~/Documents/report (1).pdf (original preserved)</span>'
+        ]
+      },
+      wrongpin: {
+        senderCmd: 'wisp send confidential-keys.kdbx',
+        receiverCmd: 'wisp recv 38104719-harbor-random-wrong-words',
+        senderLines: [
+          '<span class="dim-text">Discovery: broadcasting ephemeral mDNS beacon...</span>',
+          '<span class="dim-text">File:</span> <strong>confidential-keys.kdbx</strong> (820 KB)',
+          '<span class="dim-text">Receive with:</span>',
+          '<span class="code-highlight">wisp recv 38104719-harbor-glacier-falcon-summit</span>',
+          '<span class="dim-text">Peer connected: 192.168.1.199:58231 (QUIC TLS 1.3)</span>',
+          '<span style="color: #ef4444; font-weight: 700;">✘ SPAKE2 authentication failed: confirmation MAC mismatch!</span>',
+          '<span style="color: #fbbf24;">Session permanently terminated. One-attempt limit enforced (zero leak).</span>',
+          '<span class="dim-text">Sender exiting: security error code 2.</span>'
+        ],
+        receiverLines: [
+          '<span class="dim-text">Discovery: listening for session 38104719...</span>',
+          '<span class="dim-text">Found peer at 192.168.1.42:51900</span>',
+          '<span class="dim-text">Attempting SPAKE2 key confirmation with candidate words...</span>',
+          '<span style="color: #ef4444; font-weight: 700;">✘ Key confirmation rejected by sender!</span>',
+          '<span class="dim-text">Connection dropped by peer. Zero bytes transferred.</span>',
+          '<span class="dim-text">Temporary file dropped: zero disk residue.</span>',
+          '<span style="color: #ef4444;">✘ Transfer aborted: authentication rejected.</span>'
+        ]
+      }
+    };
+
+    function changeScenario(scenarioId) {
+      if (scenarioData[scenarioId]) {
+        activeScenario = scenarioId;
+        resetSimulation();
+        updateScenarioContent();
+        toggleSimulation();
+      }
+    }
+
+    function updateScenarioContent() {
+      const data = scenarioData[activeScenario];
+      document.getElementById('s-cmd-text').textContent = data.senderCmd;
+      document.getElementById('r-cmd-text').textContent = data.receiverCmd;
+
+      // Update lines
+      for (let i = 1; i <= 8; i++) {
+        const sEl = document.getElementById(`s-line-${i}`);
+        if (sEl && data.senderLines[i - 1] !== 'PROGRESS') {
+          sEl.innerHTML = data.senderLines[i - 1] || '';
+        }
+      }
+      for (let j = 1; j <= 7; j++) {
+        const rEl = document.getElementById(`r-line-${j}`);
+        if (rEl && data.receiverLines[j - 1] !== 'PROGRESS') {
+          rEl.innerHTML = data.receiverLines[j - 1] || '';
+        }
+      }
+    }
 
     function resetSimulation() {
       clearTimeout(simTimer);
@@ -1825,49 +1942,87 @@
       simStep = 0;
       simProgress = 0;
 
-      senderLines.forEach(id => {
-        const el = document.getElementById(id);
+      for (let i = 1; i <= 8; i++) {
+        const el = document.getElementById(`s-line-${i}`);
         if (el) el.classList.remove('visible');
-      });
-      receiverLines.forEach(id => {
-        const el = document.getElementById(id);
+      }
+      for (let j = 1; j <= 7; j++) {
+        const el = document.getElementById(`r-line-${j}`);
         if (el) el.classList.remove('visible');
-      });
+      }
 
-      document.getElementById('senderProgress').style.width = '0%';
-      document.getElementById('receiverProgress').style.width = '0%';
-      document.getElementById('senderRate').textContent = 'Streaming...';
-      document.getElementById('receiverRate').textContent = 'Receiving...';
+      const sProg = document.getElementById('senderProgress');
+      const rProg = document.getElementById('receiverProgress');
+      if (sProg) sProg.style.width = '0%';
+      if (rProg) rProg.style.width = '0%';
 
-      document.getElementById('playText').textContent = 'Play';
+      const sRate = document.getElementById('senderRate');
+      const rRate = document.getElementById('receiverRate');
+      if (sRate) sRate.textContent = 'Streaming...';
+      if (rRate) rRate.textContent = 'Receiving...';
+
+      const playText = document.getElementById('playText');
+      if (playText) playText.textContent = 'Play';
     }
 
     function runSimulationStep() {
       simStep++;
+      if (activeScenario === 'wrongpin') {
+        // Scenario 3: Wrong PIN
+        if (simStep === 1) {
+          showLine('s-line-1');
+          showLine('s-line-2');
+          simTimer = setTimeout(runSimulationStep, 600);
+        } else if (simStep === 2) {
+          showLine('s-line-3');
+          showLine('s-line-4');
+          simTimer = setTimeout(runSimulationStep, 800);
+        } else if (simStep === 3) {
+          showLine('r-line-1');
+          showLine('r-line-2');
+          simTimer = setTimeout(runSimulationStep, 600);
+        } else if (simStep === 4) {
+          showLine('s-line-5');
+          showLine('r-line-3');
+          simTimer = setTimeout(runSimulationStep, 700);
+        } else if (simStep === 5) {
+          showLine('s-line-6');
+          showLine('r-line-4');
+          simTimer = setTimeout(runSimulationStep, 700);
+        } else if (simStep === 6) {
+          showLine('s-line-7');
+          showLine('r-line-5');
+          showLine('r-line-6');
+          simTimer = setTimeout(runSimulationStep, 600);
+        } else if (simStep === 7) {
+          showLine('s-line-8');
+          showLine('r-line-7');
+          isRunning = false;
+          document.getElementById('playText').textContent = 'Replay';
+        }
+        return;
+      }
+
+      // Scenarios 1 & 2 (Nominal and No-Clobber)
       if (simStep === 1) {
-        // Step 1: Sender broadcasts mDNS
         showLine('s-line-1');
         showLine('s-line-2');
         simTimer = setTimeout(runSimulationStep, 600);
       } else if (simStep === 2) {
-        // Step 2: Sender shows receive code
         showLine('s-line-3');
         showLine('s-line-4');
         simTimer = setTimeout(runSimulationStep, 800);
       } else if (simStep === 3) {
-        // Step 3: Receiver discovers and connects
         showLine('r-line-1');
         showLine('r-line-2');
         simTimer = setTimeout(runSimulationStep, 600);
       } else if (simStep === 4) {
-        // Step 4: SPAKE2 Auth
         showLine('s-line-5');
         showLine('s-line-6');
         showLine('r-line-3');
         showLine('r-line-4');
         simTimer = setTimeout(runSimulationStep, 800);
       } else if (simStep === 5) {
-        // Step 5: Streaming starts
         showLine('s-line-7');
         showLine('r-line-5');
         animateTransfer();
@@ -1888,7 +2043,6 @@
 
         simTimer = setTimeout(animateTransfer, 50);
       } else {
-        // Step 6: Verification & Complete
         showLine('r-line-6');
         showLine('r-line-7');
         showLine('s-line-8');
@@ -1908,7 +2062,7 @@
         isRunning = false;
         document.getElementById('playText').textContent = 'Resume';
       } else {
-        if (simStep === 0 || simProgress >= 100) {
+        if (simStep === 0 || simProgress >= 100 || (activeScenario === 'wrongpin' && simStep >= 7)) {
           resetSimulation();
         }
         isRunning = true;
@@ -1929,6 +2083,9 @@
 
     const simEl = document.getElementById('simulator');
     if (simEl) observer.observe(simEl);
+
+    // Initial content setup
+    updateScenarioContent();
   </script>
 </body>
 </html>

@@ -305,38 +305,101 @@ scenario_benchmark() {
 # Mode TMUX interactif à 2 panneaux côte à côte
 # ------------------------------------------------------------------------------
 launch_tmux() {
-    local scenario="${1:-nominal}"
-    log_step "Lancement de la simulation interactif dans TMUX (Écran scindé)"
+    log_step "Lancement de la simulation interactive dans TMUX (Écran scindé)"
     
     local session="wisp_demo_$$"
     DEMO_TMP=$(mktemp -d /tmp/wisp_tmux.XXXXXX)
     local src="$DEMO_TMP/test_file.txt"
     local dst="$DEMO_TMP/destination"
+    local log_file="$DEMO_TMP/sender.log"
     mkdir -p "$dst"
     echo "Démonstration Wisp interactive en direct - $(date)" > "$src"
 
-    # Script d'orchestration pour le panneau récepteur
-    local sync_pipe="$DEMO_TMP/sync.pipe"
-    mkfifo "$sync_pipe"
+    cat > "$DEMO_TMP/sender.sh" <<EOF
+#!/usr/bin/env bash
+echo -e "\033[1;32m=== EXPÉDITEUR (TERMINAL 1) ===\033[0m\n"
+"$WISP_BIN" --no-config send "$src" 2>&1 | tee "$log_file"
+echo ""
+echo "Transfert terminé côté expéditeur."
+echo "Appuyez sur Entrée pour fermer cette fenêtre..."
+read -r _
+EOF
 
-    # Démarrer tmux en arrière-plan
-    tmux new-session -d -s "$session" -n "Wisp-Demo" \
-        "echo -e '${GREEN}${BOLD}=== EXPÉDITEUR (TERMINAL 1) ===${NC}\n'; '$WISP_BIN' --no-config send '$src' | tee '$sync_pipe'; read -p 'Appuyez sur Entrée pour quitter...'"
+    cat > "$DEMO_TMP/receiver.sh" <<EOF
+#!/usr/bin/env bash
+echo -e "\033[1;33m=== RÉCEPTEUR (TERMINAL 2) ===\033[0m\n"
+echo "Attente de l'initialisation de l'expéditeur..."
 
-    # Scinder l'écran horizontalement (panneau droit pour le récepteur)
-    tmux split-window -h -t "$session" \
-        "echo -e '${YELLOW}${BOLD}=== RÉCEPTEUR (TERMINAL 2) ===${NC}\n'; \
-         echo 'Attente du code d expéditeur...'; \
-         code=\$(grep -m 1 'wisp recv' '$sync_pipe' | sed 's/.*wisp recv //;s/ --.*//;s/ //g'); \
-         echo -e 'Code détecté : ${GREEN}'\$code'${NC}\n'; \
-         '$WISP_BIN' --no-config recv \"\$code\" --dir '$dst'; \
-         echo -e '\nFichier vérifié dans $dst :'; ls -lh '$dst'; \
-         read -p 'Appuyez sur Entrée pour quitter...'"
+code=""
+for _ in {1..100}; do
+    if grep -q "wisp recv" "$log_file" 2>/dev/null; then
+        code=\$(grep -m 1 "wisp recv" "$log_file" | sed -e 's/.*wisp recv //' -e 's/ --.*//' -e 's/[[:space:]]//g')
+        if [[ -n "\$code" ]]; then
+            break
+        fi
+    fi
+    sleep 0.1
+done
 
-    log_success "Session TMUX créée ! Attachement à la session..."
-    echo -e "${YELLOW}Astuce : Vous verrez l'expéditeur à gauche et le récepteur à droite.${NC}"
-    sleep 1
-    tmux attach-session -t "$session"
+if [[ -z "\$code" ]]; then
+    echo "Erreur : Code non détecté."
+    echo "Logs de l'expéditeur :"
+    cat "$log_file"
+    echo "Appuyez sur Entrée..."
+    read -r _
+    exit 1
+fi
+
+echo -e "Code détecté : \033[1;32m\$code\033[0m\n"
+echo "Lancement de la réception..."
+"$WISP_BIN" --no-config recv "\$code" --dir "$dst"
+
+echo -e "\n\033[1;32m✔ Fichier reçu et vérifié dans :\033[0m $dst"
+ls -lh "$dst"
+echo ""
+echo "Appuyez sur Entrée pour fermer cette fenêtre..."
+read -r _
+EOF
+
+    chmod +x "$DEMO_TMP/sender.sh" "$DEMO_TMP/receiver.sh"
+
+    # Démarrer tmux avec sender.sh
+    tmux new-session -d -s "$session" -n "Wisp-Demo" "bash $DEMO_TMP/sender.sh"
+
+    # Scinder horizontalement pour receiver.sh
+    tmux split-window -h -t "$session" "bash $DEMO_TMP/receiver.sh"
+    tmux select-layout -t "$session" even-horizontal
+
+    # Vérifier que la session est bien active
+    if ! tmux has-session -t "$session" 2>/dev/null; then
+        log_error "Échec de création de la session TMUX."
+        return 1
+    fi
+
+    log_success "Session TMUX créée avec succès !"
+    echo -e "${YELLOW}Astuce : L'expéditeur est à gauche et le récepteur est à droite.${NC}"
+
+    # Attacher ou basculer selon si on est déjà dans tmux ou non (support WSL)
+    if [[ -n "${TMUX:-}" ]]; then
+        tmux switch-client -t "$session"
+        while tmux has-session -t "$session" 2>/dev/null; do
+            sleep 1
+        done
+    elif [[ "$TERM" == "dumb" || ! -t 0 ]]; then
+        log_info "Session TMUX prête en arrière-plan ($session)."
+        echo "Pour vous y connecter depuis votre terminal interactif :"
+        echo -e "  ${BOLD}tmux attach-session -t $session${NC}\n"
+        trap - EXIT
+        return 0
+    else
+        if ! tmux attach-session -t "$session"; then
+            log_warn "Impossible d'attacher automatiquement la session TMUX."
+            echo "Vous pouvez vous y connecter manuellement via :"
+            echo -e "  ${BOLD}tmux attach-session -t $session${NC}\n"
+            trap - EXIT
+            return 0
+        fi
+    fi
 }
 
 # ------------------------------------------------------------------------------

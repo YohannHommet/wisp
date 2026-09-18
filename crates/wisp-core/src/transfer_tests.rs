@@ -489,3 +489,63 @@ async fn pre_authentication_transport_drop_allows_retry_then_succeeds() {
     let sender_receipt = sender.await.unwrap().unwrap();
     assert_eq!(sender_receipt.name, "source.txt");
 }
+
+#[tokio::test]
+async fn slowloris_trickling_sender_is_aborted() {
+    let (sc, cc) = connections().await;
+    let code = PairingCode::generate();
+    let destination = tempfile::tempdir().unwrap();
+    let mut options = ReceiveOptions::new(code.clone(), destination.path().into());
+    options.timeouts = Timeouts {
+        pake: 2,
+        block_transfer: 1, // 1-second window
+        discovery: 1,
+        wait: 2,
+    };
+    let total_size = MIN_THROUGHPUT_PER_WINDOW * 2;
+
+    let server = tokio::spawn(async move {
+        let (mut s, mut _r) = raw_sender(&sc, &code).await;
+        write_frame(
+            &mut s,
+            &FileMeta {
+                name: "data".into(),
+                size: total_size,
+                hash: "0".repeat(64),
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        // Send 1 byte at t=0
+        s.write_all(b"x").await.unwrap();
+        // Send 1 byte at t=600ms (< 1s per-read timeout)
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        if s.write_all(b"y").await.is_err() {
+            return;
+        }
+        // Send 1 byte at t=1200ms (> 1s window)
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let _ = s.write_all(b"z").await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    });
+
+    let (mut s, mut r) = cc.open_bi().await.unwrap();
+    let result = receiver_protocol(
+        &options,
+        &mut s,
+        &mut r,
+        &channel_binding(&cc).unwrap(),
+        &silent(),
+    )
+    .await;
+
+    assert!(result.is_err());
+    let err = format!("{:#}", result.unwrap_err());
+    assert!(
+        err.contains("transfer rate too slow"),
+        "expected Slowloris abort error, got: {err}"
+    );
+    server.abort();
+    let _ = server.await;
+}

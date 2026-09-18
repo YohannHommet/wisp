@@ -26,6 +26,8 @@ const CHUNK: usize = 64 * 1024;
 const HASH_CHUNK: usize = 256 * 1024;
 const MAX_FRAME: usize = 4096;
 pub const MAX_FILE_SIZE: u64 = 1 << 40;
+// Minimum bytes transferred per io timeout window to mitigate Slowloris resource exhaustion.
+const MIN_THROUGHPUT_PER_WINDOW: u64 = 16 * 1024;
 
 /// Events are synchronous and ordered; handlers should return promptly.
 /// Ready contains the secret code: do not send events to external telemetry.
@@ -485,6 +487,8 @@ async fn sender_protocol(
     let mut buf = vec![0; CHUNK];
     let mut sent = 0;
     let mut hash = blake3::Hasher::new();
+    let mut window_start = Instant::now();
+    let mut window_start_sent = 0u64;
     loop {
         let n = source
             .file
@@ -503,6 +507,18 @@ async fn sender_protocol(
             .context("sending stalled")??;
         sent += n as u64;
         progress.update(sent);
+
+        let elapsed = window_start.elapsed();
+        if elapsed >= timeouts.io() {
+            let bytes_in_window = sent - window_start_sent;
+            let remaining_expected = source.meta.size - window_start_sent;
+            let min_required = MIN_THROUGHPUT_PER_WINDOW.min(remaining_expected);
+            if bytes_in_window < min_required && sent < source.meta.size {
+                bail!("transfer rate too slow; aborted to prevent connection starvation");
+            }
+            window_start = Instant::now();
+            window_start_sent = sent;
+        }
     }
     if sent != source.meta.size || hash.finalize().to_hex().as_str() != source.meta.hash {
         bail!("source file changed during transfer; receiver must retry");
@@ -584,6 +600,8 @@ async fn receiver_protocol(
     let mut received = 0;
     let mut hash = blake3::Hasher::new();
     let mut progress = Progress::new(meta.size, events);
+    let mut window_start = Instant::now();
+    let mut window_start_received = 0u64;
     while received < meta.size {
         let limit = ((meta.size - received).min(CHUNK as u64)) as usize;
         let chunk = tokio::time::timeout(options.timeouts.io(), recv.read_chunk(limit, true))
@@ -597,6 +615,18 @@ async fn receiver_protocol(
         pending.write(&chunk.bytes)?;
         received += chunk.bytes.len() as u64;
         progress.update(received);
+
+        let elapsed = window_start.elapsed();
+        if elapsed >= options.timeouts.io() {
+            let bytes_in_window = received - window_start_received;
+            let remaining_expected = meta.size - window_start_received;
+            let min_required = MIN_THROUGHPUT_PER_WINDOW.min(remaining_expected);
+            if bytes_in_window < min_required && received < meta.size {
+                bail!("transfer rate too slow; aborted to prevent connection starvation");
+            }
+            window_start = Instant::now();
+            window_start_received = received;
+        }
     }
     expect_eof(recv, options.timeouts.io())
         .await
@@ -605,7 +635,10 @@ async fn receiver_protocol(
     if hash.finalize().to_hex().as_str() != meta.hash {
         bail!("file integrity check failed; temporary file removed");
     }
-    let published = pending.commit(&meta.name)?;
+    let name_for_commit = meta.name.clone();
+    let published = tokio::task::spawn_blocking(move || pending.commit(&name_for_commit))
+        .await
+        .context("file publication task panicked")??;
     if let Some(warning) = published.sync_warning {
         events(Event::Warning { message: warning });
     }

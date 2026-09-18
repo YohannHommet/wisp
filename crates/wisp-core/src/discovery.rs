@@ -1,264 +1,97 @@
-//! LAN discovery via mDNS (`_wisp._udp.local.`).
-//!
-//! Phase 2 change: instead of advertising the pairing code in cleartext, we
-//! advertise a 16-byte BLAKE3 commitment (`ch`). A passive LAN observer cannot
-//! extract the code from the advertisement; only the receiver, who already
-//! knows the code, can compute the same commitment and match it.
-//!
-//! The mDNS service instance name is also set to `ch` (not the raw code) so
-//! that passive LAN observers see only the commitment, not the PAKE password.
-//!
-//! TXT records advertised:
-//!   `ch`  — hex(BLAKE3(code)[..16])  code commitment (32 hex chars)
-//!   `fp`  — hex(cert fingerprint)    BLAKE3 hash of the DER certificate
-//!
-//! File metadata (name, size, hash) is no longer in mDNS; it is sent inside
-//! the PAKE-authenticated, TLS-encrypted QUIC stream (see `transfer.rs`).
-
-use std::net::{IpAddr, Ipv4Addr};
-use std::time::{Duration, Instant};
-
-use anyhow::{anyhow, Context, Result};
+//! mDNS carries a public locator and ephemeral TLS fingerprint, never a password hash.
+use crate::PairingCode;
+use anyhow::{bail, Context, Result};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    time::Duration,
+};
 
-pub const SERVICE_TYPE: &str = "_wisp._udp.local.";
+pub const SERVICE_TYPE: &str = "_wisp2._udp.local.";
 
-/// Resolved sender endpoint.
-#[derive(Debug, Clone)]
+pub struct Advertisement(ServiceDaemon);
+impl Drop for Advertisement {
+    fn drop(&mut self) {
+        let _ = self.0.shutdown();
+    }
+}
+
+#[derive(Debug)]
 pub struct Resolved {
-    pub addr: Ipv4Addr,
-    pub port: u16,
+    pub address: SocketAddr,
     pub fingerprint: [u8; 32],
 }
 
-/// Active advertisement; unregisters on drop.
-pub struct Advert {
-    daemon: ServiceDaemon,
-    fullname: String,
+pub fn advertise(
+    code: &PairingCode,
+    ip: Ipv4Addr,
+    port: u16,
+    fingerprint: &[u8; 32],
+) -> Result<Advertisement> {
+    let daemon = ServiceDaemon::new().context("starting local discovery")?;
+    let guard = Advertisement(daemon);
+    let fp = hex::encode(fingerprint);
+    let props = [("id", code.locator()), ("fp", fp.as_str()), ("v", "2")];
+    let host = format!("wisp-{}-{port}.local.", code.locator());
+    let info = ServiceInfo::new(
+        SERVICE_TYPE,
+        code.locator(),
+        &host,
+        IpAddr::V4(ip),
+        port,
+        &props[..],
+    )?;
+    guard.0.register(info).context("advertising the transfer")?;
+    Ok(guard)
 }
 
-impl Drop for Advert {
-    fn drop(&mut self) {
-        let _ = self.daemon.unregister(&self.fullname);
-        let _ = self.daemon.shutdown();
-    }
-}
-
-/// Advertise a transfer on the LAN under `code` (commitment only).
-pub fn advertise(code: &str, ip: Ipv4Addr, port: u16, fingerprint_hex: &str) -> Result<Advert> {
-    let ch = crate::code_commitment(code);
-    let daemon = ServiceDaemon::new().context("starting mDNS daemon")?;
-    let host = format!("wisp-{port}.local.");
-    let props: [(&str, &str); 2] = [("ch", &ch), ("fp", fingerprint_hex)];
-    // Use `ch` (the commitment) as the instance name, not the raw code.
-    // The instance name is broadcast in cleartext; using the code directly
-    // would expose the PAKE password to any mDNS observer on the LAN.
-    let info = ServiceInfo::new(SERVICE_TYPE, &ch, &host, IpAddr::V4(ip), port, &props[..])
-        .context("building mDNS service info")?;
-    let fullname = info.get_fullname().to_string();
-    daemon.register(info).context("registering mDNS service")?;
-    Ok(Advert { daemon, fullname })
-}
-
-/// Browse the LAN for `code` (matched via its commitment) until found or timeout.
-pub fn find(code: &str, timeout: Duration) -> Result<Resolved> {
-    let ch_expected = crate::code_commitment(code);
-    let daemon = ServiceDaemon::new().context("starting mDNS daemon")?;
-    
-    struct DaemonGuard(ServiceDaemon);
-    impl Drop for DaemonGuard {
-        fn drop(&mut self) {
-            let _ = self.0.shutdown();
-        }
-    }
-    let _guard = DaemonGuard(daemon.clone());
-
-    let receiver = daemon
+/// Async polling keeps discovery cancellation bounded and drops the daemon immediately.
+pub async fn find(code: &PairingCode, duration: Duration) -> Result<Resolved> {
+    let guard = Advertisement(ServiceDaemon::new().context("starting local discovery")?);
+    let receiver = guard
+        .0
         .browse(SERVICE_TYPE)
-        .context("starting mDNS browse")?;
-    let deadline = Instant::now() + timeout;
-
-    loop {
-        let remaining = deadline
-            .checked_duration_since(Instant::now())
-            .ok_or_else(|| anyhow!("no sender found for code `{code}` on the local network"))?;
-
-        match receiver.recv_timeout(remaining) {
-            Ok(ServiceEvent::ServiceResolved(info)) => {
-                if info.get_property_val_str("ch") != Some(ch_expected.as_str()) {
-                    continue;
-                }
-                let Some(addr) = info.get_addresses().iter().find_map(|a| match a {
-                    IpAddr::V4(v4) => Some(*v4),
-                    IpAddr::V6(_) => None,
-                }) else {
-                    continue;
+        .context("browsing the local network")?;
+    let search = async {
+        loop {
+            // Bound work per tick so a noisy network cannot starve cancellation or the timeout.
+            for _ in 0..64 {
+                let Ok(event) = receiver.try_recv() else {
+                    break;
                 };
-                let fingerprint = match parse_fingerprint(&info) {
-                    Ok(fp) => fp,
-                    Err(e) => {
-                        tracing::warn!("skipping mDNS record with invalid fingerprint: {e}");
+                if let ServiceEvent::ServiceResolved(info) = event {
+                    if info.get_property_val_str("id") != Some(code.locator())
+                        || info.get_property_val_str("v") != Some("2")
+                    {
                         continue;
                     }
-                };
-                let port = info.get_port();
-                return Ok(Resolved {
-                    addr,
-                    port,
-                    fingerprint,
-                });
+                    let Some(fp) = info
+                        .get_property_val_str("fp")
+                        .and_then(|s| hex::decode(s).ok())
+                        .and_then(|v| <[u8; 32]>::try_from(v).ok())
+                    else {
+                        continue;
+                    };
+                    let Some(ip) = info.get_addresses().iter().find_map(|ip| match ip {
+                        IpAddr::V4(v4) if !v4.is_unspecified() && !v4.is_multicast() => Some(*v4),
+                        _ => None,
+                    }) else {
+                        continue;
+                    };
+                    if info.get_port() == 0 {
+                        continue;
+                    }
+                    return Resolved {
+                        address: SocketAddr::new(ip.into(), info.get_port()),
+                        fingerprint: fp,
+                    };
+                }
             }
-            Ok(_) => continue,
-            Err(_) => {
-                return Err(anyhow!(
-                    "no sender found for code `{code}` on the local network"
-                ))
-            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
         }
-    }
-}
-
-fn parse_fingerprint(info: &ServiceInfo) -> Result<[u8; 32]> {
-    let fp_hex = info.get_property_val_str("fp").unwrap_or("");
-    let fp_vec = hex::decode(fp_hex).context("decoding certificate fingerprint")?;
-    fp_vec
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow!("advertised fingerprint has wrong length"))
-}
-
-pub const PEER_SERVICE_TYPE: &str = "_wisp-peer._udp.local.";
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
-pub struct DiscoveredPeer {
-    pub friendly_name: String,
-    pub address: String, // "ip:port"
-    pub fingerprint: String,
-}
-
-pub fn advertise_peer(friendly_name: &str, ip: Ipv4Addr, port: u16, fingerprint_hex: &str) -> Result<Advert> {
-    let daemon = ServiceDaemon::new().context("starting mDNS daemon")?;
-    let host = format!("wisp-peer-{port}.local.");
-    let props: [(&str, &str); 2] = [("name", friendly_name), ("fp", fingerprint_hex)];
-    let info = ServiceInfo::new(PEER_SERVICE_TYPE, friendly_name, &host, IpAddr::V4(ip), port, &props[..])
-        .context("building mDNS peer service info")?;
-    let fullname = info.get_fullname().to_string();
-    daemon.register(info).context("registering mDNS peer service")?;
-    Ok(Advert { daemon, fullname })
-}
-
-pub fn browse_peers(timeout: Duration) -> Result<Vec<DiscoveredPeer>> {
-    let daemon = ServiceDaemon::new().context("starting mDNS daemon")?;
-    struct DaemonGuard(ServiceDaemon);
-    impl Drop for DaemonGuard {
-        fn drop(&mut self) {
-            let _ = self.0.shutdown();
-        }
-    }
-    let _guard = DaemonGuard(daemon.clone());
-
-    let receiver = daemon
-        .browse(PEER_SERVICE_TYPE)
-        .context("starting mDNS peer browse")?;
-    
-    let deadline = Instant::now() + timeout;
-    let mut peers = std::collections::HashSet::new();
-
-    while Instant::now() < deadline {
-        let remaining = deadline.checked_duration_since(Instant::now()).unwrap_or(Duration::ZERO);
-        if remaining.is_zero() {
-            break;
-        }
-
-        if let Ok(ServiceEvent::ServiceResolved(info)) = receiver.recv_timeout(remaining) {
-            let name = info.get_property_val_str("name")
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| info.get_fullname().split('.').next().unwrap_or("Unknown").to_string());
-            let fp = info.get_property_val_str("fp").unwrap_or("").to_string();
-            let Some(addr) = info.get_addresses().iter().find_map(|a| match a {
-                IpAddr::V4(v4) => Some(*v4),
-                IpAddr::V6(_) => None,
-            }) else {
-                continue;
-            };
-            let port = info.get_port();
-            peers.insert(DiscoveredPeer {
-                friendly_name: name,
-                address: format!("{addr}:{port}"),
-                fingerprint: fp,
-            });
-        }
-    }
-
-    Ok(peers.into_iter().collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn fake_info_with_fp(fp: &str) -> ServiceInfo {
-        ServiceInfo::new(
-            SERVICE_TYPE,
-            "test",
-            "wisp-test.local.",
-            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-            1234,
-            &[("ch", "aabbcc"), ("fp", fp)][..],
-        )
-        .expect("valid ServiceInfo")
-    }
-
-    #[test]
-    fn parse_fingerprint_valid() {
-        let fp = "a".repeat(64);
-        let info = fake_info_with_fp(&fp);
-        let result = parse_fingerprint(&info);
-        assert!(result.is_ok(), "expected Ok, got {result:?}");
-        assert_eq!(result.unwrap().len(), 32);
-    }
-
-    #[test]
-    fn parse_fingerprint_wrong_length() {
-        let fp = "a".repeat(60);
-        let info = fake_info_with_fp(&fp);
-        assert!(parse_fingerprint(&info).is_err());
-    }
-
-    #[test]
-    fn parse_fingerprint_invalid_hex() {
-        let fp = "z".repeat(64);
-        let info = fake_info_with_fp(&fp);
-        assert!(parse_fingerprint(&info).is_err());
-    }
-
-    #[test]
-    fn parse_fingerprint_empty() {
-        let info = fake_info_with_fp("");
-        assert!(parse_fingerprint(&info).is_err());
-    }
-
-    #[test]
-    fn test_peer_advertise_and_browse() {
-        // Start advertisement on loopback IP
-        let friendly_name = "Mocked Test Peer";
-        let fp_hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        let advert = advertise_peer(friendly_name, Ipv4Addr::LOCALHOST, 8888, fp_hex);
-        assert!(advert.is_ok(), "Expected advertisement registration success");
-        
-        let _guard = advert.unwrap();
-
-        // Scan loopback interface for advertising peer
-        let discovered = browse_peers(Duration::from_millis(600));
-        assert!(discovered.is_ok(), "Expected browse to complete successfully");
-        
-        let list = discovered.unwrap();
-        // Since mDNS relies on local UDP network broadcast interface, it may or may not succeed
-        // depending on the sandbox network interface configurations, but it should compile.
-        // We can inspect the contents if non-empty:
-        if let Some(peer) = list.iter().find(|p| p.friendly_name == friendly_name) {
-            assert_eq!(peer.fingerprint, fp_hex);
-            assert!(peer.address.contains("127.0.0.1:8888") || peer.address.contains("127.0.0.1"));
-        }
+    };
+    match tokio::time::timeout(duration, search).await {
+        Ok(resolved) => Ok(resolved),
+        Err(_) => bail!("no sender found on this network; check the code and Wi-Fi, or use --address with the address printed by the sender"),
     }
 }

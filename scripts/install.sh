@@ -1,55 +1,47 @@
 #!/usr/bin/env bash
-set -e
-
-# Detect OS
-OS="$(uname -s)"
-case "${OS}" in
-    Linux*)     PLATFORM=linux;;
-    Darwin*)    PLATFORM=macos;;
-    *)          echo "Unsupported OS: ${OS}"; exit 1;;
+# Install a published CLI release. Verify SHA-256 before replacing a user binary.
+set -euo pipefail
+repo='https://github.com/YohannHommet/wisp'
+case "$(uname -s)" in
+  Linux) platform=linux ;;
+  Darwin) platform=macos ;;
+  *) echo 'Use install.ps1 on Windows.' >&2; exit 1 ;;
 esac
-
-# Detect Architecture
-ARCH="$(uname -m)"
-case "${ARCH}" in
-    x86_64*)    ARCH_SUFFIX=amd64;;
-    arm64*|aarch64*)  ARCH_SUFFIX=arm64;;
-    *)          echo "Unsupported architecture: ${ARCH}"; exit 1;;
+case "$(uname -m)" in
+  x86_64) arch=amd64 ;;
+  aarch64|arm64) arch=arm64 ;;
+  *) echo 'Unsupported architecture.' >&2; exit 1 ;;
 esac
-
-# Resolve Asset Name
-if [ "${PLATFORM}" = "macos" ]; then
-    # We distribute a universal binary for macOS
-    ASSET_NAME="wisp-macos-universal"
-else
-    ASSET_NAME="wisp-linux-${ARCH_SUFFIX}"
+asset="wisp-${platform}-${arch}"
+if [[ "$platform" == macos ]]; then asset=wisp-macos-universal; fi
+command -v curl >/dev/null || { echo 'curl is required.' >&2; exit 1; }
+version="${WISP_VERSION:-}"
+if [[ -z "$version" ]]; then
+  resolved=$(curl --proto '=https' --tlsv1.2 -fsSL -o /dev/null -w '%{url_effective}' "$repo/releases/latest")
+  version="${resolved##*/}"
 fi
-
-URL="https://github.com/YohannHommet/wisp/releases/latest/download/${ASSET_NAME}"
-INSTALL_DIR="/usr/local/bin"
-DEST="${INSTALL_DIR}/wisp"
-
-echo "Downloading Wisp from ${URL}..."
-
-# Download binary
-if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -o wisp_temp "${URL}"
-elif command -v wget >/dev/null 2>&1; then
-    wget -qO wisp_temp "${URL}"
-else
-    echo "Error: curl or wget is required to download Wisp."
-    exit 1
+if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo 'WISP_VERSION must be a release tag such as v0.2.0.' >&2; exit 1; fi
+work=$(mktemp -d "${TMPDIR:-/tmp}/wisp.XXXXXX")
+trap 'rm -rf -- "$work"' EXIT
+base="$repo/releases/download/$version"
+curl --proto '=https' --tlsv1.2 -fSL "$base/$asset" -o "$work/$asset"
+curl --proto '=https' --tlsv1.2 -fsSL "$base/SHA256SUMS" -o "$work/SHA256SUMS"
+expected=$(awk -v asset="$asset" '$2 == asset {print $1}' "$work/SHA256SUMS")
+if [[ ! "$expected" =~ ^[0-9a-fA-F]{64}$ ]]; then echo 'Missing or ambiguous release checksum.' >&2; exit 1; fi
+if command -v sha256sum >/dev/null; then actual=$(sha256sum "$work/$asset");
+else actual=$(shasum -a 256 "$work/$asset"); fi
+actual="${actual%% *}"
+if [[ "$actual" != "$expected" ]]; then echo 'Checksum mismatch; nothing installed.' >&2; exit 1; fi
+install_dir="${WISP_INSTALL_DIR:-$HOME/.local/bin}"
+mkdir -p -- "$install_dir"
+if [[ -d "$install_dir/wisp" ]]; then
+  echo "Cannot replace a directory at $install_dir/wisp; nothing installed." >&2
+  exit 1
 fi
-
-chmod +x wisp_temp
-
-echo "Installing to ${DEST}..."
-if [ -w "${INSTALL_DIR}" ]; then
-    mv wisp_temp "${DEST}"
-else
-    echo "Requires sudo privileges to write to ${INSTALL_DIR}"
-    sudo mv wisp_temp "${DEST}"
-fi
-
-echo "Successfully installed Wisp CLI!"
-wisp --version
+# Stage in the destination filesystem so replacement is atomic.
+staged=$(mktemp "$install_dir/.wisp-install.XXXXXX")
+trap 'rm -rf -- "$work"; rm -f -- "$staged"' EXIT
+install -m 755 "$work/$asset" "$staged"
+mv -f -- "$staged" "$install_dir/wisp"
+echo "Installed $version at $install_dir/wisp"
+case ":$PATH:" in *":$install_dir:"*) ;; *) echo "Add $install_dir to PATH to run wisp from any directory." ;; esac

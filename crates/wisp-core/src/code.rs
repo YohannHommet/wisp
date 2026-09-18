@@ -1,12 +1,10 @@
-//! Short, human-friendly pairing codes: `<number>-<word>-<word>`.
-//!
-//! In Phase 1 the code identifies a transfer advertised over mDNS. In Phase 2
-//! it becomes the password of a PAKE (SPAKE2), so the wordlist is chosen to be
-//! short, unambiguous, and easy to read aloud.
+//! A public eight-digit discovery identifier followed by four secret words.
+//! Only the identifier is advertised. No password-derived value leaves PAKE.
 
-use rand::seq::IndexedRandom;
+use anyhow::{bail, Result};
+use rand::{seq::IndexedRandom, Rng};
+use std::{fmt, str::FromStr};
 
-/// Curated, evocative, low-confusion wordlist (light / nature / space themed).
 static WORDS: &[&str] = &[
     "amber", "anchor", "aurora", "basil", "beacon", "birch", "bison", "bloom", "borealis",
     "breeze", "bronze", "canyon", "cedar", "cinder", "citrus", "cobalt", "comet", "copper",
@@ -23,16 +21,53 @@ static WORDS: &[&str] = &[
     "zenith", "zephyr", "zircon",
 ];
 
-/// Generate a fresh pairing code, e.g. `7-tiger-saturn`.
-pub fn generate() -> String {
-    let mut rng = rand::rng();
-    let n: u16 = rand::random_range(0..1000);
-    let w1 = WORDS.choose(&mut rng).copied().unwrap_or("wisp");
-    let mut w2 = WORDS.choose(&mut rng).copied().unwrap_or("spark");
-    if w2 == w1 {
-        w2 = WORDS.choose(&mut rng).copied().unwrap_or("spark");
+/// A single-use pairing code. Debug output deliberately redacts the password.
+#[derive(Clone)]
+pub struct PairingCode(String);
+
+impl PairingCode {
+    pub fn generate() -> Self {
+        let mut rng = rand::rng();
+        let mut value = format!("{:08}", rng.random_range(0..100_000_000u32));
+        for _ in 0..4 {
+            value.push('-');
+            value.push_str(WORDS.choose(&mut rng).expect("nonempty word list"));
+        }
+        Self(value)
     }
-    format!("{n}-{w1}-{w2}")
+
+    pub fn locator(&self) -> &str {
+        &self.0[..8]
+    }
+
+    /// Expose only when sharing with the receiver or supplying the PAKE password.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for PairingCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PairingCode")
+            .field("locator", &self.locator())
+            .finish_non_exhaustive()
+    }
+}
+
+impl FromStr for PairingCode {
+    type Err = anyhow::Error;
+    fn from_str(input: &str) -> Result<Self> {
+        let value = input.trim().to_ascii_lowercase();
+        let parts: Vec<_> = value.split('-').collect();
+        if parts.len() != 5
+            || parts[0].len() != 8
+            || !parts[0].bytes().all(|b| b.is_ascii_digit())
+            || parts[1..].iter().any(|word| !WORDS.contains(word))
+        {
+            bail!("invalid code: copy the eight-digit identifier and four words from Wisp 0.2 or newer");
+        }
+        Ok(Self(value))
+    }
 }
 
 #[cfg(test)]
@@ -40,31 +75,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn code_has_three_parts() {
-        let c = generate();
-        let parts: Vec<&str> = c.split('-').collect();
-        assert_eq!(
-            parts.len(),
-            3,
-            "code `{c}` should have 3 dash-separated parts"
-        );
-        assert!(
-            parts[0].parse::<u16>().is_ok(),
-            "first part should be a number"
-        );
+    fn generated_codes_roundtrip_and_keep_secrets_out_of_debug() {
+        for _ in 0..100 {
+            let code = PairingCode::generate();
+            let parsed: PairingCode = code.expose().parse().unwrap();
+            assert_eq!(parsed.expose(), code.expose());
+            assert!(!format!("{code:?}").contains(code.expose()));
+        }
+        let unique: std::collections::HashSet<_> = WORDS.iter().collect();
+        assert_eq!(unique.len(), WORDS.len());
+        assert_eq!(WORDS.len(), 120);
     }
 
     #[test]
-    fn codes_vary() {
-        // Extremely unlikely to collide across 50 draws if entropy is sane.
-        let mut seen = std::collections::HashSet::new();
-        for _ in 0..50 {
-            seen.insert(generate());
+    fn discovery_identifier_is_independent_of_password() {
+        let a: PairingCode = "12345678-amber-river-moss-lunar".parse().unwrap();
+        let b: PairingCode = "12345678-tiger-saturn-fern-ivory".parse().unwrap();
+        assert_eq!(a.locator(), b.locator());
+        assert_ne!(a.expose(), b.expose());
+    }
+
+    #[test]
+    fn normalizes_pasted_codes_and_rejects_old_or_malformed_codes() {
+        let parsed: PairingCode = "  12345678-AMBER-RIVER-MOSS-LUNAR\n".parse().unwrap();
+        assert_eq!(parsed.expose(), "12345678-amber-river-moss-lunar");
+        for value in [
+            "",
+            "7-tiger-saturn",
+            "../../etc/passwd",
+            "12345678-amber-river-moss-unknown",
+            "12345678-amber-river-moss-lunar-extra",
+        ] {
+            assert!(value.parse::<PairingCode>().is_err());
         }
-        assert!(
-            seen.len() > 40,
-            "expected mostly-unique codes, got {}",
-            seen.len()
-        );
     }
 }

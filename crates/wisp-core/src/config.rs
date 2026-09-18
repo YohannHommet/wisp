@@ -1,223 +1,141 @@
-use std::path::PathBuf;
-use std::time::Duration;
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use anyhow::{bail, Context, Result};
+use serde::Deserialize;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Timeouts {
-    pub pake: Option<u64>,
-    pub discovery: Option<u64>,
-    pub block_transfer: Option<u64>,
+    pub pake: u64,
+    pub discovery: u64,
+    pub block_transfer: u64,
+    pub wait: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TrustedPeer {
-    pub friendly_name: String,
-    pub certificate_fingerprint: String,
-    pub last_seen_ip: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Config {
-    pub default_relay: Option<String>,
-    pub default_download_dir: Option<String>,
-    pub timeouts: Option<Timeouts>,
-    #[serde(default)]
-    pub trusted_peers: std::collections::HashMap<String, TrustedPeer>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedTimeouts {
-    pub pake: Duration,
-    pub discovery: Duration,
-    pub block_transfer: Duration,
-}
-
-impl Default for ResolvedTimeouts {
+impl Default for Timeouts {
     fn default() -> Self {
         Self {
-            pake: Duration::from_secs(15),
-            discovery: Duration::from_secs(20),
-            block_transfer: Duration::from_secs(30),
+            pake: 15,
+            discovery: 20,
+            block_transfer: 30,
+            wait: 300,
         }
     }
+}
+
+impl Timeouts {
+    pub fn validate(&self) -> Result<()> {
+        for (name, value) in [
+            ("pake", self.pake),
+            ("discovery", self.discovery),
+            ("block_transfer", self.block_transfer),
+            ("wait", self.wait),
+        ] {
+            if !(1..=3600).contains(&value) {
+                bail!("timeout {name} must be between 1 and 3600 seconds");
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn io(&self) -> Duration {
+        Duration::from_secs(self.block_transfer)
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Config {
+    pub default_download_dir: Option<PathBuf>,
+    pub timeouts: Timeouts,
 }
 
 impl Config {
-    /// Load config from default path (~/.config/wisp/config.toml)
-    pub fn load() -> Result<Self> {
-        let path = Self::default_path().context("getting default config path")?;
-        if path.exists() {
-            let toml_str = std::fs::read_to_string(&path)
-                .with_context(|| format!("reading config file at {}", path.display()))?;
-            let config: Config = toml::from_str(&toml_str)
-                .with_context(|| format!("parsing config file at {}", path.display()))?;
-            Ok(config)
-        } else {
-            Ok(Config::default())
-        }
-    }
-
-    /// Save config back to ~/.config/wisp/config.toml
-    pub fn save(&self) -> Result<()> {
-        let path = Self::default_path().context("getting default config path")?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating config parent directory {}", parent.display()))?;
-        }
-        let toml_str = toml::to_string_pretty(self)
-            .context("serializing configuration to TOML")?;
-        std::fs::write(&path, toml_str)
-            .with_context(|| format!("writing config file to {}", path.display()))?;
-        Ok(())
-    }
-
-    /// Default configuration path
     pub fn default_path() -> Result<PathBuf> {
-        dirs::config_dir()
-            .map(|d| d.join("wisp").join("config.toml"))
-            .context("could not determine user configuration directory")
+        Ok(dirs::config_dir()
+            .context("cannot determine the configuration directory")?
+            .join("wisp/config.toml"))
     }
 
-    /// Resolve WAN relay URL using precedence rule: CLI > Env > Config File > Default (None)
-    pub fn resolve_relay(&self, cli_val: Option<&str>, env_val: Option<&str>) -> Option<String> {
-        if let Some(c) = cli_val {
-            return Some(c.to_string());
-        }
-        if let Some(e) = env_val {
-            return Some(e.to_string());
-        }
-        self.default_relay.clone()
-    }
-
-    /// Resolve download destination directory using precedence rule: CLI > Config File > Current Dir
-    pub fn resolve_download_dir(&self, cli_val: Option<PathBuf>) -> PathBuf {
-        if let Some(c) = cli_val {
-            return c;
-        }
-        if let Some(ref d) = self.default_download_dir {
-            // Expand home directory if it starts with ~
-            let path_str = if d.starts_with("~/") || d == "~" {
-                if let Some(home) = dirs::home_dir() {
-                    if d == "~" {
-                        home.to_string_lossy().to_string()
-                    } else {
-                        home.join(&d[2..]).to_string_lossy().to_string()
-                    }
-                } else {
-                    d.clone()
-                }
-            } else {
-                d.clone()
-            };
-            return PathBuf::from(path_str);
-        }
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    }
-
-    /// Resolve timeouts using precedence rule: Config File > Default
-    pub fn resolve_timeouts(&self) -> ResolvedTimeouts {
-        let (p, d, b) = if let Some(ref t) = self.timeouts {
-            (
-                t.pake.unwrap_or(15),
-                t.discovery.unwrap_or(20),
-                t.block_transfer.unwrap_or(30),
-            )
-        } else {
-            (15, 20, 30)
+    pub fn load(path: &Path, required: bool) -> Result<Self> {
+        const MAX_CONFIG_SIZE: u64 = 64 * 1024;
+        let file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(err) if !required && err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("reading configuration {}", path.display()));
+            }
         };
-        ResolvedTimeouts {
-            pake: Duration::from_secs(p),
-            discovery: Duration::from_secs(d),
-            block_transfer: Duration::from_secs(b),
+        use std::io::Read;
+        let mut text = String::new();
+        file.take(MAX_CONFIG_SIZE + 1)
+            .read_to_string(&mut text)
+            .with_context(|| format!("reading configuration {}", path.display()))?;
+        if text.len() > MAX_CONFIG_SIZE as usize {
+            bail!("configuration file {} exceeds 64 KiB limit", path.display());
         }
+        let config: Self = toml::from_str(&text).with_context(|| format!(
+            "invalid configuration {}; Wisp 0.2 supports default_download_dir and timeouts only (remove legacy relay/trusted_peers settings)", path.display()))?;
+        config.timeouts.validate()?;
+        Ok(config)
+    }
+
+    pub fn download_dir(&self, explicit: Option<PathBuf>) -> Result<PathBuf> {
+        let Some(path) = explicit.or_else(|| self.default_download_dir.clone()) else {
+            return std::env::current_dir().context("cannot determine the current directory");
+        };
+        if let Ok(rest) = path.strip_prefix("~") {
+            return Ok(dirs::home_dir()
+                .context("cannot expand ~ without a home directory")?
+                .join(rest));
+        }
+        Ok(path)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn test_default_config_resolution() {
-        // No config file, no env, no CLI. Should yield hardcoded defaults.
-        let config = Config::default();
-        
-        let relay = config.resolve_relay(None, None);
-        assert_eq!(relay, None); // default is LAN-only (no relay)
-
-        let download_dir = config.resolve_download_dir(None);
-        assert_eq!(download_dir, std::env::current_dir().unwrap());
-
-        let timeouts = config.resolve_timeouts();
-        assert_eq!(timeouts.pake, Duration::from_secs(15));
-        assert_eq!(timeouts.discovery, Duration::from_secs(20));
-        assert_eq!(timeouts.block_transfer, Duration::from_secs(30));
+    fn missing_optional_config_is_fine_but_broken_or_legacy_config_is_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        assert!(Config::load(&path, false).is_ok());
+        assert!(Config::load(&path, true).is_err());
+        for text in [
+            "invalid!",
+            "default_relay = 'https://example.com'",
+            "[timeouts]\npake = 0",
+            "[timeouts]\nwait = 999999",
+        ] {
+            std::fs::write(&path, text).unwrap();
+            assert!(Config::load(&path, false).is_err());
+        }
     }
-
     #[test]
-    fn test_config_file_parsing() {
-        let toml_str = r#"
-            default_relay = "https://relay.example.com:7777"
-            default_download_dir = "/tmp/downloads"
-
-            [timeouts]
-            pake = 10
-            discovery = 5
-            block_transfer = 60
-        "#;
-
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.default_relay.as_deref(), Some("https://relay.example.com:7777"));
-        assert_eq!(config.default_download_dir.as_deref(), Some("/tmp/downloads"));
-        
-        let timeouts = config.timeouts.unwrap();
-        assert_eq!(timeouts.pake, Some(10));
-        assert_eq!(timeouts.discovery, Some(5));
-        assert_eq!(timeouts.block_transfer, Some(60));
+    fn config_size_cap_rejects_large_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "a".repeat(65 * 1024)).unwrap();
+        assert!(Config::load(&path, true).is_err());
     }
-
     #[test]
-    fn test_precedence_resolution() {
-        let toml_str = r#"
-            default_relay = "https://config-relay.com"
-            default_download_dir = "/config/downloads"
-        "#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-
-        // 1. CLI > Env > Config
-        let relay = config.resolve_relay(Some("https://cli-relay.com"), Some("https://env-relay.com"));
-        assert_eq!(relay.as_deref(), Some("https://cli-relay.com"));
-
-        // 2. Env > Config (when CLI is None)
-        let relay = config.resolve_relay(None, Some("https://env-relay.com"));
-        assert_eq!(relay.as_deref(), Some("https://env-relay.com"));
-
-        // 3. Config (when CLI and Env are None)
-        let relay = config.resolve_relay(None, None);
-        assert_eq!(relay.as_deref(), Some("https://config-relay.com"));
-
-        // 4. Download Dir precedence: CLI > Config > Current Dir
-        let download_dir = config.resolve_download_dir(Some(PathBuf::from("/cli/downloads")));
-        assert_eq!(download_dir, PathBuf::from("/cli/downloads"));
-
-        let download_dir = config.resolve_download_dir(None);
-        assert_eq!(download_dir, PathBuf::from("/config/downloads"));
-    }
-
-    #[test]
-    fn test_config_serialize_deserialize_trusted_peers() {
-        let mut config = Config::default();
-        let peer = TrustedPeer {
-            friendly_name: "Test Laptop".to_string(),
-            certificate_fingerprint: "sha256-hash-value".to_string(),
-            last_seen_ip: Some("192.168.1.50".to_string()),
-        };
-        config.trusted_peers.insert("peer-uuid-1".to_string(), peer.clone());
-
-        let serialized = toml::to_string(&config).unwrap();
-        let parsed: Config = toml::from_str(&serialized).unwrap();
-        
-        assert_eq!(parsed.trusted_peers.get("peer-uuid-1"), Some(&peer));
+    fn partial_config_keeps_defaults_and_explicit_directory_wins() {
+        let config: Config =
+            toml::from_str("default_download_dir = 'Downloads'\n[timeouts]\npake = 5").unwrap();
+        assert_eq!(config.timeouts.pake, 5);
+        assert_eq!(config.timeouts.wait, 300);
+        assert_eq!(
+            config.download_dir(Some("other".into())).unwrap(),
+            PathBuf::from("other")
+        );
+        assert_eq!(
+            config.download_dir(None).unwrap(),
+            PathBuf::from("Downloads")
+        );
     }
 }

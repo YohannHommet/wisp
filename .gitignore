@@ -1,3 +1,5 @@
 /target
-*.wisp-part
-test-*.bin
+.wisp-*.part
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/corpus/

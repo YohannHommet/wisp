@@ -162,12 +162,14 @@ fn rejected_transfer_then_repeated_delivery_preserves_existing_files() {
             let sent = &sent.last().unwrap()["receipt"];
             let saved = destination
                 .path()
+                .canonicalize()
+                .unwrap()
                 .join(format!("rapport été ({attempt}).bin"));
             assert_eq!(received["saved_to"], path(&saved));
             assert_eq!(received["hash"], sent["hash"]);
             assert_eq!(received["name"], sent["name"]);
             assert_eq!(received["size"], payload.len());
-            assert_eq!(std::fs::read(saved).unwrap(), payload);
+            assert_eq!(std::fs::read(&saved).unwrap(), payload);
         }
         assert_eq!(
             std::fs::read(destination.path().join(name)).unwrap(),

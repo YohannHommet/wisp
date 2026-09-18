@@ -27,6 +27,7 @@ jobs:
       - name: Run tests
         shell: bash
         run: |
+          set -eo pipefail
           cargo test --locked --workspace 2>&1 | tee test-output.log
       - name: Push failure log to debug branch
         if: failure()

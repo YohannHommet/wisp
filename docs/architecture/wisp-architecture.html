@@ -1,4 +1,4 @@
-code<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en" data-theme="dark" data-preset="classic">
 <head>
   <meta charset="UTF-8">
@@ -5172,7 +5172,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <path data-edge-from="wire" data-edge-to="receiver" data-edge-label="encrypted LAN transfer" data-edge-key="10" data-edge-id="wire-receiver" data-composition-points="1000,352;1050,352" d="M 1000 352 L 1050 352" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="workspace" data-edge-to="cli" data-edge-label="builds binary" data-edge-key="11" data-edge-id="workspace-cli" data-composition-points="278,585;278,384" d="M 278 585 L 278 384" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="workspace" data-edge-to="checks" data-edge-label="cargo workflows" data-edge-key="12" data-edge-id="workspace-checks" data-composition-points="370,617;410,617" d="M 370 617 L 410 617" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="checks" data-edge-to="cli" data-edge-label="release artifact" data-edge-key="13" data-edge-id="checks-cli" data-composition-points="502.5,585;502.5,484.5;292,484.5;292,384" d="M 502.5 585 L 502.5 492.5 Q 502.5 484.5 494.5 484.5 L 300 484.5 Q 292 484.5 292 476.5 L 292 384" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="checks" data-edge-to="cli" data-edge-label="release artifact" data-edge-key="13" data-edge-id="checks-cli" data-composition-points="505,585;505,484.5;292,484.5;292,384" d="M 505 585 L 505 492.5 Q 505 484.5 497 484.5 L 300 484.5 Q 292 484.5 292 476.5 L 292 384" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
         <g id="node-sender" data-node-id="sender" data-node-label="Sender computer" tabindex="0" role="button" aria-label="Focus Sender computer, wisp send &lt;file&gt;, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="wisp send &lt;file&gt;" data-node-context="Architecture component">
@@ -5250,8 +5250,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <text data-detail="context" x="702.5" y="561" class="t-muted" font-size="9" text-anchor="middle">optional LAN locator</text>
         </g>
 
-        <g id="node-transport" data-node-id="transport" data-node-label="Ephemeral QUIC/TLS" tabindex="0" role="button" aria-label="Focus Ephemeral QUIC/TLS, IPv4 LAN endpoint, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="IPv4 LAN endpoint" data-node-context="Architecture component">
-          <title>Ephemeral QUIC/TLS · IPv4 LAN endpoint · Architecture component</title>
+        <g id="node-transport" data-node-id="transport" data-node-label="Ephemeral QUIC/TLS" tabindex="0" role="button" aria-label="Focus Ephemeral QUIC/TLS, stream-only, probe tolerant, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="stream-only, probe tolerant" data-node-context="Architecture component">
+          <title>Ephemeral QUIC/TLS · stream-only, probe tolerant · Architecture component</title>
           <rect x="620" y="320" width="175" height="64" rx="6" class="c-mask"/>
           <rect x="620" y="320" width="175" height="64" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(626 326) scale(0.6875)">
@@ -5259,11 +5259,11 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="707.5" y="350" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Ephemeral QUIC/TLS</text>
-        <text data-detail="context" x="707.5" y="366" class="t-muted" font-size="9" text-anchor="middle">IPv4 LAN endpoint</text>
+        <text data-detail="context" x="707.5" y="366" class="t-muted" font-size="9" text-anchor="middle">stream-only, probe tolerant</text>
         </g>
 
-        <g id="node-pake" data-node-id="pake" data-node-label="Channel-bound SPAKE2" tabindex="0" role="button" aria-label="Focus Channel-bound SPAKE2, mutual authentication, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="mutual authentication" data-node-context="Architecture component">
-          <title>Channel-bound SPAKE2 · mutual authentication · Architecture component</title>
+        <g id="node-pake" data-node-id="pake" data-node-label="Channel-bound SPAKE2" tabindex="0" role="button" aria-label="Focus Channel-bound SPAKE2, TLS exporter, 1 attempt max, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="TLS exporter, 1 attempt max" data-node-context="Architecture component">
+          <title>Channel-bound SPAKE2 · TLS exporter, 1 attempt max · Architecture component</title>
           <rect x="820" y="190" width="180" height="64" rx="6" class="c-mask"/>
           <rect x="820" y="190" width="180" height="64" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(826 196) scale(0.6875)">
@@ -5271,22 +5271,22 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="910" y="220" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Channel-bound SPAKE2</text>
-        <text data-detail="context" x="910" y="236" class="t-muted" font-size="9" text-anchor="middle">mutual authentication</text>
+        <text data-detail="context" x="910" y="236" class="t-muted" font-size="9" text-anchor="middle">TLS exporter, 1 attempt max</text>
         </g>
 
-        <g id="node-wire" data-node-id="wire" data-node-label="WSP/2 transfer stream" tabindex="0" role="button" aria-label="Focus WSP/2 transfer stream, GET, metadata, bytes, receipt, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="GET, metadata, bytes, receipt" data-node-context="Architecture component">
-          <title>WSP/2 transfer stream · GET, metadata, bytes, receipt · Architecture component</title>
+        <g id="node-wire" data-node-id="wire" data-node-label="WSP/2 transfer stream" tabindex="0" role="button" aria-label="Focus WSP/2 transfer stream, watchdog, blake3, receipt, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="watchdog, blake3, receipt" data-node-context="Architecture component">
+          <title>WSP/2 transfer stream · watchdog, blake3, receipt · Architecture component</title>
           <rect x="820" y="320" width="180" height="64" rx="6" class="c-mask"/>
           <rect x="820" y="320" width="180" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(826 326) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="910" y="350" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">WSP/2 transfer stream</text>
-        <text data-detail="context" x="910" y="366" class="t-muted" font-size="9" text-anchor="middle">GET, metadata, bytes, receipt</text>
+        <text data-detail="context" x="910" y="366" class="t-muted" font-size="9" text-anchor="middle">watchdog, blake3, receipt</text>
         </g>
 
-        <g id="node-storage" data-node-id="storage" data-node-label="Verified local storage" tabindex="0" role="button" aria-label="Focus Verified local storage, temporary file, sync, no overwrite, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="temporary file, sync, no overwrite" data-node-context="Architecture component">
-          <title>Verified local storage · temporary file, sync, no overwrite · Architecture component</title>
+        <g id="node-storage" data-node-id="storage" data-node-label="Verified local storage" tabindex="0" role="button" aria-label="Focus Verified local storage, no-clobber, bidi clean, fsync, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="no-clobber, bidi clean, fsync" data-node-context="Architecture component">
+          <title>Verified local storage · no-clobber, bidi clean, fsync · Architecture component</title>
           <rect x="820" y="475" width="180" height="64" rx="6" class="c-mask"/>
           <rect x="820" y="475" width="180" height="64" rx="6" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(826 481) scale(0.6875)">
@@ -5294,7 +5294,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="910" y="505" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Verified local storage</text>
-        <text data-detail="context" x="910" y="521" class="t-muted" font-size="8.4" text-anchor="middle">temporary file, sync, no overwrite</text>
+        <text data-detail="context" x="910" y="521" class="t-muted" font-size="9" text-anchor="middle">no-clobber, bidi clean, fsync</text>
         </g>
 
         <g id="node-receiver" data-node-id="receiver" data-node-label="Receiver computer" tabindex="0" role="button" aria-label="Focus Receiver computer, wisp recv &lt;code&gt;, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="wisp recv &lt;code&gt;" data-node-context="Architecture component">
@@ -5320,15 +5320,15 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <text data-detail="context" x="285" y="631" class="t-muted" font-size="9" text-anchor="middle">wisp-core + wisp CLI</text>
         </g>
 
-        <g id="node-checks" data-node-id="checks" data-node-label="Release build and checks" tabindex="0" role="button" aria-label="Focus Release build and checks, cargo build, fmt, clippy, tests, Architecture component" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="cargo build, fmt, clippy, tests" data-node-context="Architecture component">
-          <title>Release build and checks · cargo build, fmt, clippy, tests · Architecture component</title>
-          <rect x="410" y="585" width="185" height="64" rx="6" class="c-mask"/>
-          <rect x="410" y="585" width="185" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
+        <g id="node-checks" data-node-id="checks" data-node-label="Build, checks &amp; E2E suite" tabindex="0" role="button" aria-label="Focus Build, checks &amp; E2E suite, cargo test, make demo &amp; tmux, Architecture component" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="cargo test, make demo &amp; tmux" data-node-context="Architecture component">
+          <title>Build, checks &amp; E2E suite · cargo test, make demo &amp; tmux · Architecture component</title>
+          <rect x="410" y="585" width="190" height="64" rx="6" class="c-mask"/>
+          <rect x="410" y="585" width="190" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(416 591) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="502.5" y="615" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Release build and checks</text>
-        <text data-detail="context" x="502.5" y="631" class="t-muted" font-size="9" text-anchor="middle">cargo build, fmt, clippy, tests</text>
+          <text data-node-label="" data-detail-anchor="" x="505" y="615" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Build, checks &amp; E2E suite</text>
+        <text data-detail="context" x="505" y="631" class="t-muted" font-size="9" text-anchor="middle">cargo test, make demo &amp; tmux</text>
         </g>
 
         <!-- Connection labels -->
@@ -5385,8 +5385,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <text x="390" y="663" class="t-messagebus" font-size="8" text-anchor="middle">cargo workflows</text>
         </g>
         <g data-detail="context" data-edge-from="checks" data-edge-to="cli" data-edge-label="release artifact" data-edge-key="13" data-edge-id="checks-cli">
-          <rect x="353.85" y="464.5" width="86.8" height="14" rx="3" class="c-mask"/>
-          <text x="397.25" y="474.5" class="t-messagebus" font-size="8" text-anchor="middle">release artifact</text>
+          <rect x="355.1" y="464.5" width="86.8" height="14" rx="3" class="c-mask"/>
+          <text x="398.5" y="474.5" class="t-messagebus" font-size="8" text-anchor="middle">release artifact</text>
         </g>
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
@@ -5616,9 +5616,9 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <h3>Runtime</h3>
         </div>
         <ul>
-          <li>&bull; CLI-only: no daemon or persistent device registry</li>
-          <li>&bull; One file and one receiver per session</li>
-          <li>&bull; Discovery can be replaced by an explicit LAN address</li>
+          <li>&bull; CLI-only: no daemon, no cloud relay, no GUI attack surface</li>
+          <li>&bull; Stream-only QUIC TLS 1.3 with probe tolerance (Retry tokens)</li>
+          <li>&bull; Windowed Slowloris watchdog &amp; graceful socket buffer fallback</li>
         </ul>
       </div>
 
@@ -5628,21 +5628,21 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <h3>Trust and integrity</h3>
         </div>
         <ul>
-          <li>&bull; QUIC/TLS carries the session</li>
-          <li>&bull; SPAKE2 is bound to the TLS channel</li>
-          <li>&bull; The receiver publishes only after checksum verification</li>
+          <li>&bull; Channel-bound SPAKE2 with single-attempt anti-bruteforce</li>
+          <li>&bull; Full BLAKE3 checksum verification before file publishing</li>
+          <li>&bull; Atomic temp persistence, No-Clobber collision &amp; Unicode Bidi sanitization</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot amber"></div>
-          <h3>Build</h3>
+          <h3>Build &amp; Verification</h3>
         </div>
         <ul>
-          <li>&bull; Rust 1.88 workspace with release LTO and stripped binaries</li>
-          <li>&bull; Release CLI: cargo build --locked --release --bin wisp</li>
-          <li>&bull; Verification: fmt, clippy, workspace tests, optional mDNS smoke test</li>
+          <li>&bull; Rust #![forbid(unsafe_code)] workspace with zero clippy warnings</li>
+          <li>&bull; 7 automated E2E security scenarios: make demo</li>
+          <li>&bull; Interactive dual-terminal TMUX split-screen: make demo-tmux</li>
         </ul>
       </div>
     </div>

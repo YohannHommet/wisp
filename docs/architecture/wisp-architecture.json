@@ -80,7 +80,7 @@
       "id": "transport",
       "type": "security",
       "label": "Ephemeral QUIC/TLS",
-      "sublabel": "IPv4 LAN endpoint",
+      "sublabel": "stream-only, probe tolerant",
       "pos": [620, 320],
       "size": [175, 64]
     },
@@ -88,7 +88,7 @@
       "id": "pake",
       "type": "security",
       "label": "Channel-bound SPAKE2",
-      "sublabel": "mutual authentication",
+      "sublabel": "TLS exporter, 1 attempt max",
       "pos": [820, 190],
       "size": [180, 64]
     },
@@ -96,7 +96,7 @@
       "id": "wire",
       "type": "backend",
       "label": "WSP/2 transfer stream",
-      "sublabel": "GET, metadata, bytes, receipt",
+      "sublabel": "watchdog, blake3, receipt",
       "pos": [820, 320],
       "size": [180, 64]
     },
@@ -104,7 +104,7 @@
       "id": "storage",
       "type": "database",
       "label": "Verified local storage",
-      "sublabel": "temporary file, sync, no overwrite",
+      "sublabel": "no-clobber, bidi clean, fsync",
       "pos": [820, 475],
       "size": [180, 64]
     },
@@ -127,10 +127,10 @@
     {
       "id": "checks",
       "type": "cloud",
-      "label": "Release build and checks",
-      "sublabel": "cargo build, fmt, clippy, tests",
+      "label": "Build, checks & E2E suite",
+      "sublabel": "cargo test, make demo & tmux",
       "pos": [410, 585],
-      "size": [185, 64]
+      "size": [190, 64]
     }
   ],
   "connections": [
@@ -154,27 +154,27 @@
       "dot": "emerald",
       "title": "Runtime",
       "items": [
-        "CLI-only: no daemon or persistent device registry",
-        "One file and one receiver per session",
-        "Discovery can be replaced by an explicit LAN address"
+        "CLI-only: no daemon, no cloud relay, no GUI attack surface",
+        "Stream-only QUIC TLS 1.3 with probe tolerance (Retry tokens)",
+        "Windowed Slowloris watchdog & graceful socket buffer fallback"
       ]
     },
     {
       "dot": "violet",
       "title": "Trust and integrity",
       "items": [
-        "QUIC/TLS carries the session",
-        "SPAKE2 is bound to the TLS channel",
-        "The receiver publishes only after checksum verification"
+        "Channel-bound SPAKE2 with single-attempt anti-bruteforce",
+        "Full BLAKE3 checksum verification before file publishing",
+        "Atomic temp persistence, No-Clobber collision & Unicode Bidi sanitization"
       ]
     },
     {
       "dot": "amber",
-      "title": "Build",
+      "title": "Build & Verification",
       "items": [
-        "Rust 1.88 workspace with release LTO and stripped binaries",
-        "Release CLI: cargo build --locked --release --bin wisp",
-        "Verification: fmt, clippy, workspace tests, optional mDNS smoke test"
+        "Rust #![forbid(unsafe_code)] workspace with zero clippy warnings",
+        "7 automated E2E security scenarios: make demo",
+        "Interactive dual-terminal TMUX split-screen: make demo-tmux"
       ]
     }
   ]

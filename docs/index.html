@@ -363,6 +363,13 @@
       color: var(--text-secondary);
       margin-bottom: 28px;
       backdrop-filter: blur(8px);
+      text-decoration: none;
+      transition: all var(--transition-fast);
+    }
+    .hero-badge:hover {
+      border-color: var(--cyan-500);
+      color: var(--text-primary);
+      transform: translateY(-1px);
     }
     .hero-badge .status-dot {
       width: 8px;
@@ -1053,6 +1060,53 @@
       font-size: 0.9375rem;
     }
 
+    .binary-download-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .binary-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      text-decoration: none;
+      transition: all var(--transition-fast);
+    }
+    .binary-card:hover {
+      border-color: var(--cyan-500);
+      background: var(--bg-surface-elevated);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-sm);
+    }
+    .binary-card-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .binary-name {
+      font-weight: 600;
+      font-size: 0.9375rem;
+    }
+    .binary-tag {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+    }
+    .binary-card svg {
+      color: var(--cyan-400);
+      flex-shrink: 0;
+      transition: transform var(--transition-fast);
+    }
+    .binary-card:hover svg {
+      transform: translateY(2px);
+    }
+
     /* ==========================================================================
        CLI Command Cheatsheet
        ========================================================================== */
@@ -1300,10 +1354,14 @@
     <!-- Hero Section -->
     <section class="hero-section">
       <div class="container">
-        <div class="hero-badge">
+        <a href="https://github.com/YohannHommet/wisp/releases/tag/v0.2.0" class="hero-badge" target="_blank" rel="noopener noreferrer" title="View Wisp v0.2.0 Release on GitHub">
           <span class="status-dot"></span>
-          <span>WSP/2 Protocol · Quinn QUIC TLS 1.3 · 100% Safe Rust</span>
-        </div>
+          <span>v0.2.0 is live · WSP/2 Protocol · 100% Safe Rust</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.7;">
+            <path d="M5 12h14"></path>
+            <path d="m12 5 7 7-7 7"></path>
+          </svg>
+        </a>
 
         <h1 class="hero-title">
           Zero-cloud, cryptographically verified <span class="gradient-text">LAN file transfers.</span>
@@ -1315,11 +1373,20 @@
 
         <div class="hero-actions">
           <a href="#install" class="btn-primary">
-            <span>Get Started</span>
+            <span>Install Wisp</span>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <line x1="5" y1="12" x2="19" y2="12"></line>
               <polyline points="12 5 19 12 12 19"></polyline>
             </svg>
+          </a>
+
+          <a href="https://github.com/YohannHommet/wisp/releases/tag/v0.2.0" class="btn-secondary" target="_blank" rel="noopener noreferrer">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span>Download v0.2.0</span>
           </a>
 
           <a href="architecture/wisp-architecture.html" class="btn-secondary">
@@ -1328,14 +1395,14 @@
               <polyline points="2 17 12 22 22 17"></polyline>
               <polyline points="2 12 12 17 22 12"></polyline>
             </svg>
-            <span>Interactive Architecture</span>
+            <span>Architecture Diagram</span>
           </a>
         </div>
 
         <div class="quick-command-pill">
           <span>Quick Install:</span>
-          <code>cargo install --locked --path crates/wisp-cli</code>
-          <button class="copy-pill-btn" onclick="copySnippet('cargo install --locked --path crates/wisp-cli', this)" aria-label="Copy installation command" title="Copy command">
+          <code>curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash</code>
+          <button class="copy-pill-btn" onclick="copySnippet('curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash', this)" aria-label="Copy installation command" title="Copy command">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -1601,18 +1668,26 @@
 
       <div class="tabs-container">
         <div class="tabs-nav" role="tablist">
-          <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-cargo" id="btn-tab-cargo" onclick="switchTab('cargo')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
-            </svg>
-            <span>Cargo (Rust)</span>
-          </button>
-          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-script" id="btn-tab-script" onclick="switchTab('script')">
+          <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-script" id="btn-tab-script" onclick="switchTab('script')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="4 17 10 11 4 5"></polyline>
               <line x1="12" y1="19" x2="20" y2="19"></line>
             </svg>
             <span>One-Line Script</span>
+          </button>
+          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-binaries" id="btn-tab-binaries" onclick="switchTab('binaries')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span>Standalone Binaries</span>
+          </button>
+          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-cargo" id="btn-tab-cargo" onclick="switchTab('cargo')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+            </svg>
+            <span>Cargo (Rust)</span>
           </button>
           <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-source" id="btn-tab-source" onclick="switchTab('source')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1624,18 +1699,8 @@
           </button>
         </div>
 
-        <!-- Tab 1: Cargo -->
-        <div class="tab-pane active" id="tab-cargo" role="tabpanel" aria-labelledby="btn-tab-cargo">
-          <p class="pane-description" style="margin-bottom: 12px;">Install directly from this repository checkout using standard Rust toolchain:</p>
-          <div class="code-box">
-            <code>cargo install --locked --path crates/wisp-cli<br>wisp --version</code>
-            <button class="code-copy-btn" onclick="copySnippet('cargo install --locked --path crates/wisp-cli\nwisp --version', this)">Copy</button>
-          </div>
-          <p class="pane-description">Requires Rust 1.88.0 or newer. Compiles optimized native binary directly into your <code>~/.cargo/bin</code> path.</p>
-        </div>
-
-        <!-- Tab 2: Script -->
-        <div class="tab-pane" id="tab-script" role="tabpanel" aria-labelledby="btn-tab-script">
+        <!-- Tab 1: Script (Default) -->
+        <div class="tab-pane active" id="tab-script" role="tabpanel" aria-labelledby="btn-tab-script">
           <p class="pane-description" style="margin-bottom: 12px;"><strong>Linux & macOS:</strong> One-line checksum-verified installer:</p>
           <div class="code-box">
             <code>curl -fsSL https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.sh | bash</code>
@@ -1646,9 +1711,58 @@
             <code>irm https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.ps1 | iex</code>
             <button class="code-copy-btn" onclick="copySnippet('irm https://raw.githubusercontent.com/YohannHommet/wisp/develop/scripts/install.ps1 | iex', this)">Copy</button>
           </div>
+          <p class="pane-description">Downloads the latest release asset for your platform, verifies SHA-256 against <code>SHA256SUMS</code>, and atomically installs to <code>~/.local/bin/wisp</code> or <code>%LOCALAPPDATA%\Wisp\bin\wisp.exe</code>.</p>
         </div>
 
-        <!-- Tab 3: Source -->
+        <!-- Tab 2: Standalone Binaries -->
+        <div class="tab-pane" id="tab-binaries" role="tabpanel" aria-labelledby="btn-tab-binaries">
+          <p class="pane-description" style="margin-bottom: 12px;">Directly download precompiled standalone binaries for <strong>Wisp v0.2.0</strong>:</p>
+          <div class="binary-download-grid">
+            <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/wisp-linux-amd64" class="binary-card">
+              <div class="binary-card-meta">
+                <span class="binary-name">Linux x86_64</span>
+                <span class="binary-tag">Static musl · 5.2 MB</span>
+              </div>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            </a>
+            <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/wisp-linux-arm64" class="binary-card">
+              <div class="binary-card-meta">
+                <span class="binary-name">Linux ARM64</span>
+                <span class="binary-tag">Static musl · 4.4 MB</span>
+              </div>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            </a>
+            <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/wisp-macos-universal" class="binary-card">
+              <div class="binary-card-meta">
+                <span class="binary-name">macOS Universal</span>
+                <span class="binary-tag">Apple Silicon + Intel · 8.4 MB</span>
+              </div>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            </a>
+            <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/wisp-windows-amd64.exe" class="binary-card">
+              <div class="binary-card-meta">
+                <span class="binary-name">Windows x64 (.exe)</span>
+                <span class="binary-tag">Native MSVC · 5.2 MB</span>
+              </div>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            </a>
+          </div>
+          <p class="pane-description" style="margin-top: 14px; font-size: 0.8125rem;">
+            Verify with <a href="https://github.com/YohannHommet/wisp/releases/download/v0.2.0/SHA256SUMS" target="_blank" rel="noopener" style="color: var(--cyan-400); text-decoration: underline;">SHA256SUMS</a>. View full release details on <a href="https://github.com/YohannHommet/wisp/releases/tag/v0.2.0" target="_blank" rel="noopener" style="color: var(--cyan-400); text-decoration: underline;">GitHub Releases</a>.
+          </p>
+        </div>
+
+        <!-- Tab 3: Cargo -->
+        <div class="tab-pane" id="tab-cargo" role="tabpanel" aria-labelledby="btn-tab-cargo">
+          <p class="pane-description" style="margin-bottom: 12px;">Install directly from this repository checkout using standard Rust toolchain:</p>
+          <div class="code-box">
+            <code>cargo install --locked --path crates/wisp-cli<br>wisp --version</code>
+            <button class="code-copy-btn" onclick="copySnippet('cargo install --locked --path crates/wisp-cli\nwisp --version', this)">Copy</button>
+          </div>
+          <p class="pane-description">Requires Rust 1.88.0 or newer. Compiles optimized native binary directly into your <code>~/.cargo/bin</code> path.</p>
+        </div>
+
+        <!-- Tab 4: Source -->
         <div class="tab-pane" id="tab-source" role="tabpanel" aria-labelledby="btn-tab-source">
           <p class="pane-description" style="margin-bottom: 12px;">Clone and build locally with test validation:</p>
           <div class="code-box">

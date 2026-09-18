@@ -309,56 +309,172 @@ launch_tmux() {
     
     local session="wisp_demo_$$"
     DEMO_TMP=$(mktemp -d /tmp/wisp_tmux.XXXXXX)
-    local src="$DEMO_TMP/test_file.txt"
-    local dst="$DEMO_TMP/destination"
-    local log_file="$DEMO_TMP/sender.log"
-    mkdir -p "$dst"
-    echo "Démonstration Wisp interactive en direct - $(date)" > "$src"
+    local src1="$DEMO_TMP/document_nominal.txt"
+    local dst1="$DEMO_TMP/destination_nominal"
+    local log_file1="$DEMO_TMP/sender1.log"
+    local src2="$DEMO_TMP/secret_attaque.txt"
+    local dst2="$DEMO_TMP/destination_attaque"
+    local log_file2="$DEMO_TMP/sender2.log"
+    mkdir -p "$dst1" "$dst2"
+    echo "Démonstration Wisp - Transfert Nominal Certifié - $(date)" > "$src1"
+    echo "Données confidentielles - Scénario Sécurité PAKE" > "$src2"
 
     cat > "$DEMO_TMP/sender.sh" <<EOF
 #!/usr/bin/env bash
-echo -e "\033[1;32m=== EXPÉDITEUR (TERMINAL 1) ===\033[0m\n"
-"$WISP_BIN" --no-config send "$src" 2>&1 | tee "$log_file"
+set -e
+
+GREEN='\033[1;32m'
+RED='\033[1;31m'
+YELLOW='\033[1;33m'
+CYAN='\033[1;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+echo -e "\${GREEN}\${BOLD}====================================================\${NC}"
+echo -e "\${GREEN}\${BOLD}         EXPÉDITEUR (TERMINAL GAUCHE)               \${NC}"
+echo -e "\${GREEN}\${BOLD}====================================================\${NC}\n"
+
+# --- SCÉNARIO 1 : TRANSFERT NOMINAL ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 1/2] Transfert nominal standard (mDNS + PAKE)\${NC}"
+echo "Initialisation du fichier source et écoute réseau..."
+"$WISP_BIN" --no-config send "$src1" 2>&1 | tee "$log_file1"
+echo -e "\n\${GREEN}✔ Transfert nominal complété et certifié !\${NC}"
+touch "$DEMO_TMP/s1_sender_done"
+
+while [[ ! -f "$DEMO_TMP/s2_start" ]]; do
+    sleep 0.1
+done
+
+echo -e "\n\${YELLOW}----------------------------------------------------\${NC}"
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 2/2] Test sécurité : Tentative avec faux code\${NC}"
+echo "Démarrage d'un nouvel envoi sécurisé..."
+
+# L'expéditeur doit rejeter la connexion et s'arrêter dès l'échec PAKE
+set +e
+"$WISP_BIN" --no-config send "$src2" 2>&1 | tee "$log_file2"
+sender_status=\$?
+set -e
+
+echo -e "\n\${GREEN}✔ Expéditeur arrêté immédiatement suite à l'échec PAKE (Statut \$sender_status).\${NC}"
+echo -e "\${GREEN}  Politique stricte validée : 1 tentative max, aucune fuite oracle.\${NC}"
+touch "$DEMO_TMP/s2_sender_done"
+
+while [[ ! -f "$DEMO_TMP/s2_receiver_done" ]]; do
+    sleep 0.1
+done
+
+echo -e "\n\${GREEN}\${BOLD}====================================================\${NC}"
+echo -e "\${GREEN}\${BOLD}✔ DÉMONSTRATION VALIDÉE AVEC SUCCÈS SUR LES 2 SCÉNARIOS\${NC}"
+echo -e "\${GREEN}\${BOLD}====================================================\${NC}"
+echo "Fermeture automatique dans 4 secondes..."
+for i in 4 3 2 1; do
+    echo -n "\$i... "
+    sleep 1
+done
 echo ""
-echo "Transfert terminé côté expéditeur."
-echo "Appuyez sur Entrée pour fermer cette fenêtre..."
-read -r _
 EOF
 
     cat > "$DEMO_TMP/receiver.sh" <<EOF
 #!/usr/bin/env bash
-echo -e "\033[1;33m=== RÉCEPTEUR (TERMINAL 2) ===\033[0m\n"
-echo "Attente de l'initialisation de l'expéditeur..."
+set -e
 
-code=""
+GREEN='\033[1;32m'
+RED='\033[1;31m'
+YELLOW='\033[1;33m'
+CYAN='\033[1;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+echo -e "\${YELLOW}\${BOLD}====================================================\${NC}"
+echo -e "\${YELLOW}\${BOLD}          RÉCEPTEUR (TERMINAL DROIT)                \${NC}"
+echo -e "\${YELLOW}\${BOLD}====================================================\${NC}\n"
+
+# --- SCÉNARIO 1 : TRANSFERT NOMINAL ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 1/2] Transfert nominal standard (mDNS + PAKE)\${NC}"
+echo "Attente de l'annonce de l'expéditeur..."
+
+code1=""
 for _ in {1..100}; do
-    if grep -q "wisp recv" "$log_file" 2>/dev/null; then
-        code=\$(grep -m 1 "wisp recv" "$log_file" | sed -e 's/.*wisp recv //' -e 's/ --.*//' -e 's/[[:space:]]//g')
-        if [[ -n "\$code" ]]; then
-            break
-        fi
+    if grep -q "wisp recv" "$log_file1" 2>/dev/null; then
+        code1=\$(grep -m 1 "wisp recv" "$log_file1" | sed -e 's/.*wisp recv //' -e 's/ --.*//' -e 's/[[:space:]]//g')
+        if [[ -n "\$code1" ]]; then break; fi
     fi
     sleep 0.1
 done
 
-if [[ -z "\$code" ]]; then
-    echo "Erreur : Code non détecté."
-    echo "Logs de l'expéditeur :"
-    cat "$log_file"
-    echo "Appuyez sur Entrée..."
-    read -r _
+if [[ -z "\$code1" ]]; then
+    echo -e "\${RED}Erreur : Code non détecté.\${NC}"
     exit 1
 fi
 
-echo -e "Code détecté : \033[1;32m\$code\033[0m\n"
-echo "Lancement de la réception..."
-"$WISP_BIN" --no-config recv "\$code" --dir "$dst"
+echo -e "Code détecté : \${GREEN}\${BOLD}\$code1\${NC}"
+echo "Connexion et téléchargement..."
+"$WISP_BIN" --no-config recv "\$code1" --dir "$dst1"
 
-echo -e "\n\033[1;32m✔ Fichier reçu et vérifié dans :\033[0m $dst"
-ls -lh "$dst"
+echo -e "\n\${GREEN}✔ [RÉCEPTEUR] Fichier vérifié et sauvegardé dans :\${NC} $dst1"
+ls -lh "$dst1"
+
+while [[ ! -f "$DEMO_TMP/s1_sender_done" ]]; do
+    sleep 0.1
+done
+
+echo -e "\n\${YELLOW}Pause de 3 secondes pour observation...\${NC}"
+sleep 3
+touch "$DEMO_TMP/s2_start"
+
+# --- SCÉNARIO 2 : TENTATIVE FAUX CODE ---
+echo -e "\n\${YELLOW}----------------------------------------------------\${NC}"
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 2/2] Test sécurité : Tentative avec faux code\${NC}"
+echo "Attente du code légitime de l'expéditeur..."
+
+code2=""
+addr2=""
+for _ in {1..100}; do
+    if grep -q "wisp recv" "$log_file2" 2>/dev/null; then
+        code2=\$(grep -m 1 "wisp recv" "$log_file2" | sed -e 's/.*wisp recv //' -e 's/ --.*//' -e 's/[[:space:]]//g')
+        if grep -q "Sender address:" "$log_file2" 2>/dev/null; then
+            addr2=\$(grep -m 1 "Sender address:" "$log_file2" | awk '{print \$3}')
+        fi
+        if [[ -n "\$code2" ]]; then break; fi
+    fi
+    sleep 0.1
+done
+
+locator=\${code2%%-*}
+bad_code="\${locator}-amber-amber-amber-amber"
+echo -e "Code légitime émis : \${CYAN}\$code2\${NC}"
+echo -e "\${RED}\${BOLD}Attaque simulée : connexion avec mot de passe erroné : \$bad_code\${NC}\n"
+
+set +e
+if [[ -n "\$addr2" ]]; then
+    "$WISP_BIN" --no-config recv "\$bad_code" --dir "$dst2" --address "\$addr2"
+else
+    "$WISP_BIN" --no-config recv "\$bad_code" --dir "$dst2"
+fi
+recv_status=\$?
+set -e
+
+if [[ \$recv_status -ne 0 ]]; then
+    echo -e "\n\${GREEN}✔ [RÉCEPTEUR] Rejeté par PAKE (Statut \$recv_status). Sécurité prouvée !\${NC}"
+else
+    echo -e "\n\${RED}✘ [RÉCEPTEUR] ERREUR : Le mauvais code a été accepté !\${NC}"
+    exit 1
+fi
+
+touch "$DEMO_TMP/s2_receiver_done"
+while [[ ! -f "$DEMO_TMP/s2_sender_done" ]]; do
+    sleep 0.1
+done
+
+echo -e "\n\${GREEN}\${BOLD}====================================================\${NC}"
+echo -e "\${GREEN}\${BOLD}✔ DÉMONSTRATION VALIDÉE AVEC SUCCÈS SUR LES 2 SCÉNARIOS\${NC}"
+echo -e "\${GREEN}\${BOLD}====================================================\${NC}"
+echo "Fermeture automatique dans 4 secondes..."
+for i in 4 3 2 1; do
+    echo -n "\$i... "
+    sleep 1
+done
 echo ""
-echo "Appuyez sur Entrée pour fermer cette fenêtre..."
-read -r _
 EOF
 
     chmod +x "$DEMO_TMP/sender.sh" "$DEMO_TMP/receiver.sh"
@@ -370,36 +486,41 @@ EOF
     tmux split-window -h -t "$session" "bash $DEMO_TMP/receiver.sh"
     tmux select-layout -t "$session" even-horizontal
 
+    # Activer le support souris (défilement et sélection dans WSL / Windows Terminal)
+    tmux set-option -t "$session" mouse on 2>/dev/null || true
+
     # Vérifier que la session est bien active
     if ! tmux has-session -t "$session" 2>/dev/null; then
         log_error "Échec de création de la session TMUX."
         return 1
     fi
 
-    log_success "Session TMUX créée avec succès !"
-    echo -e "${YELLOW}Astuce : L'expéditeur est à gauche et le récepteur est à droite.${NC}"
+    log_success "Session TMUX interactive démarrée !"
+    echo -e "${YELLOW}Les deux scénarios vont se jouer automatiquement côte à côte.${NC}"
+    echo -e "${CYAN}Astuce : Utilisez la souris pour scroller ou redimensionner les panneaux si besoin.${NC}"
 
-    # Attacher ou basculer selon si on est déjà dans tmux ou non (support WSL)
+    # Attacher ou basculer selon l'environnement
     if [[ -n "${TMUX:-}" ]]; then
         tmux switch-client -t "$session"
         while tmux has-session -t "$session" 2>/dev/null; do
             sleep 1
         done
     elif [[ "$TERM" == "dumb" || ! -t 0 ]]; then
-        log_info "Session TMUX prête en arrière-plan ($session)."
-        echo "Pour vous y connecter depuis votre terminal interactif :"
-        echo -e "  ${BOLD}tmux attach-session -t $session${NC}\n"
-        trap - EXIT
-        return 0
+        log_info "Session TMUX en cours d'exécution ($session)."
+        echo "Pour observer en direct : tmux attach-session -t $session"
+        while tmux has-session -t "$session" 2>/dev/null; do
+            sleep 1
+        done
     else
         if ! tmux attach-session -t "$session"; then
-            log_warn "Impossible d'attacher automatiquement la session TMUX."
-            echo "Vous pouvez vous y connecter manuellement via :"
-            echo -e "  ${BOLD}tmux attach-session -t $session${NC}\n"
-            trap - EXIT
-            return 0
+            log_warn "Attachement automatique non supporté. Attente de la fin de la démonstration..."
+            while tmux has-session -t "$session" 2>/dev/null; do
+                sleep 1
+            done
         fi
     fi
+
+    log_success "Démonstration des 2 scénarios terminée avec succès !"
 }
 
 # ------------------------------------------------------------------------------

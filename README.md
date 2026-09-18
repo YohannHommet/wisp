@@ -1,6 +1,14 @@
 # Wisp
 
+[![CI](https://github.com/YohannHommet/wisp/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/YohannHommet/wisp/actions/workflows/ci.yml)
+[![Pages](https://github.com/YohannHommet/wisp/actions/workflows/pages.yml/badge.svg?branch=develop)](https://yohannhommet.github.io/wisp/)
+[![Documentation & Demo](https://img.shields.io/badge/website%20%26%20demo-interactive-06b6d4)](https://yohannhommet.github.io/wisp/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Threat Model](https://img.shields.io/badge/security-threat%20model-8b5cf6)](docs/THREAT_MODEL.md)
+
 Send a file between two computers on the same network. No account, browser, cloud storage, or server to configure.
+
+> 🌐 **Interactive Demo & Architecture Explorer**: Test real-time transfer scenarios and view the authenticated QUIC protocol flow at **[yohannhommet.github.io/wisp](https://yohannhommet.github.io/wisp/)**.
 
 Wisp 0.2 is a terminal app for one file at a time. Install it on **both computers**, use the same Wi-Fi or Ethernet network, and keep both commands open until they finish. To send a folder or several files, create an archive first.
 

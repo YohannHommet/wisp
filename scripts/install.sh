@@ -21,7 +21,7 @@ if [[ -z "$version" ]]; then
   version="${resolved##*/}"
 fi
 if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo 'WISP_VERSION must be a release tag such as v0.2.0.' >&2; exit 1; fi
-work=$(mktemp -d)
+work=$(mktemp -d "${TMPDIR:-/tmp}/wisp.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 base="$repo/releases/download/$version"
 curl --proto '=https' --tlsv1.2 -fSL "$base/$asset" -o "$work/$asset"

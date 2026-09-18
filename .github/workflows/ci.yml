@@ -31,10 +31,12 @@ jobs:
         run: |
           if ! cargo test --locked --workspace > test-output.log 2>&1; then
             cat test-output.log
-            echo "### \`cargo test\` failure on ${{ matrix.os }}" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            tail -n 100 test-output.log >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Failure on ${{ matrix.os }}::cargo test failed"
+            tail -n 40 test-output.log | while IFS= read -r line; do
+              if [ -n "$line" ]; then
+                echo "::error title=${{ matrix.os }}::$line"
+              fi
+            done
             exit 1
           fi
           cat test-output.log

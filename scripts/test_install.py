@@ -130,7 +130,7 @@ class InstallerTests(unittest.TestCase):
         result = self.run_installer()
         self.assert_refused(result)
         self.assertTrue(self.destination.is_symlink())
-        self.assertEqual(self.destination.resolve(), other_directory)
+        self.assertEqual(self.destination.resolve(), other_directory.resolve())
         self.assertEqual(list(other_directory.iterdir()), [])
 
 

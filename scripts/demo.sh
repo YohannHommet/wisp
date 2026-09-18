@@ -364,14 +364,13 @@ while [[ ! -f "$DEMO_TMP/s2_receiver_done" ]]; do
 done
 
 echo -e "\n\${GREEN}\${BOLD}====================================================\${NC}"
-echo -e "\${GREEN}\${BOLD}✔ DÉMONSTRATION VALIDÉE AVEC SUCCÈS SUR LES 2 SCÉNARIOS\${NC}"
+echo -e "\${GREEN}\${BOLD}✔ DÉMONSTRATION COMPLÉTÉE CÔTÉ EXPÉDITEUR\${NC}"
 echo -e "\${GREEN}\${BOLD}====================================================\${NC}"
-echo "Fermeture automatique dans 4 secondes..."
-for i in 4 3 2 1; do
-    echo -n "\$i... "
-    sleep 1
-done
-echo ""
+echo -e "\${CYAN}ℹ Utilisez la molette de la souris pour faire défiler les logs.\${NC}"
+echo -e "\${YELLOW}Appuyez sur [Entrée] pour quitter TMUX...\${NC}"
+
+read -r _
+tmux send-keys -t "${session}.1" Enter 2>/dev/null || true
 EOF
 
     cat > "$DEMO_TMP/receiver.sh" <<EOF
@@ -467,14 +466,16 @@ while [[ ! -f "$DEMO_TMP/s2_sender_done" ]]; do
 done
 
 echo -e "\n\${GREEN}\${BOLD}====================================================\${NC}"
-echo -e "\${GREEN}\${BOLD}✔ DÉMONSTRATION VALIDÉE AVEC SUCCÈS SUR LES 2 SCÉNARIOS\${NC}"
+echo -e "\${GREEN}\${BOLD}✔ DÉMONSTRATION COMPLÉTÉE AVEC SUCCÈS SUR LES 2 SCÉNARIOS\${NC}"
 echo -e "\${GREEN}\${BOLD}====================================================\${NC}"
-echo "Fermeture automatique dans 4 secondes..."
-for i in 4 3 2 1; do
-    echo -n "\$i... "
-    sleep 1
-done
+echo -e "  \${GREEN}1. Transfert nominal :\${NC} mDNS + PAKE + QUIC + BLAKE3 vérifié"
+echo -e "  \${GREEN}2. Protection sécurité :\${NC} Rejet immédiat sur mauvais mot de passe"
 echo ""
+echo -e "\${CYAN}ℹ Utilisez la molette de la souris pour faire défiler les logs.\${NC}"
+echo -e "\${YELLOW}\${BOLD}👉 Appuyez sur [Entrée] dans n'importe quel volet pour fermer TMUX...\${NC}"
+
+read -r _
+tmux send-keys -t "${session}.0" Enter 2>/dev/null || true
 EOF
 
     chmod +x "$DEMO_TMP/sender.sh" "$DEMO_TMP/receiver.sh"
@@ -557,7 +558,7 @@ main() {
         ctrl-c)     scenario_ctrl_c ;;
         bidi)       scenario_bidi ;;
         benchmark)  scenario_benchmark ;;
-        tmux)       launch_tmux ;;
+        tmux)       shift; launch_tmux "$@" ;;
         all)
             scenario_nominal
             scenario_collision

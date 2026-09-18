@@ -41,7 +41,7 @@ demo:
 	./scripts/demo.sh all
 
 demo-tmux:
-	./scripts/demo.sh tmux
+	./scripts/demo.sh tmux $(ARGS)
 
 clean:
 	cargo clean

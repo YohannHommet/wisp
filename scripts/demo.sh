@@ -305,21 +305,12 @@ scenario_benchmark() {
 # Mode TMUX interactif à 2 panneaux côte à côte
 # ------------------------------------------------------------------------------
 launch_tmux() {
-    log_step "Lancement de la simulation interactive dans TMUX (Écran scindé)"
+    log_step "Lancement de la simulation interactive des 7 scénarios dans TMUX"
     
     local session="wisp_demo_$$"
     DEMO_TMP=$(mktemp -d /tmp/wisp_tmux.XXXXXX)
-    local src1="$DEMO_TMP/document_nominal.txt"
-    local dst1="$DEMO_TMP/destination_nominal"
-    local log_file1="$DEMO_TMP/sender1.log"
-    local src2="$DEMO_TMP/secret_attaque.txt"
-    local dst2="$DEMO_TMP/destination_attaque"
-    local log_file2="$DEMO_TMP/sender2.log"
-    mkdir -p "$dst1" "$dst2"
-    echo "Démonstration Wisp - Transfert Nominal Certifié - $(date)" > "$src1"
-    echo "Données confidentielles - Scénario Sécurité PAKE" > "$src2"
 
-    cat > "$DEMO_TMP/sender.sh" <<EOF
+    cat > "$DEMO_TMP/sender.sh" << EOF
 #!/usr/bin/env bash
 set -e
 
@@ -330,41 +321,118 @@ CYAN='\033[1;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+WISP_BIN="$WISP_BIN"
+DEMO_TMP="$DEMO_TMP"
+
+wait_ready() {
+    local log="\$1"
+    for _ in {1..100}; do
+        if grep -q "wisp recv" "\$log" 2>/dev/null; then return 0; fi
+        sleep 0.05
+    done
+    return 1
+}
+
 echo -e "\${GREEN}\${BOLD}====================================================\${NC}"
 echo -e "\${GREEN}\${BOLD}         EXPÉDITEUR (TERMINAL GAUCHE)               \${NC}"
 echo -e "\${GREEN}\${BOLD}====================================================\${NC}\n"
 
-# --- SCÉNARIO 1 : TRANSFERT NOMINAL ---
-echo -e "\${CYAN}\${BOLD}[SCÉNARIO 1/2] Transfert nominal standard (mDNS + PAKE)\${NC}"
-echo "Initialisation du fichier source et écoute réseau..."
-"$WISP_BIN" --no-config send "$src1" 2>&1 | tee "$log_file1"
-echo -e "\n\${GREEN}✔ Transfert nominal complété et certifié !\${NC}"
-touch "$DEMO_TMP/s1_sender_done"
+# --- SCÉNARIO 1/7 : NOMINAL ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 1/7] Transfert nominal standard (mDNS + PAKE)\${NC}"
+src1="\$DEMO_TMP/src1_doc.txt"
+echo "Document officiel Wisp certifié - \$(date)" > "\$src1"
+"\$WISP_BIN" --no-config send "\$src1" > "\$DEMO_TMP/s1.log" 2>&1 &
+P1=\$!
+wait_ready "\$DEMO_TMP/s1.log"
+touch "\$DEMO_TMP/s1_ready"
+wait \$P1
+echo -e "\${GREEN}✔ [1/7] Fichier expédié et vérifié par le récepteur.\${NC}\n"
+touch "\$DEMO_TMP/s1_done"
+while [[ ! -f "\$DEMO_TMP/s2_start" ]]; do sleep 0.05; done
 
-while [[ ! -f "$DEMO_TMP/s2_start" ]]; do
-    sleep 0.1
-done
+# --- SCÉNARIO 2/7 : COLLISION NO-CLOBBER ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 2/7] Protection anti-écrasement (No-Clobber)\${NC}"
+src2="\$DEMO_TMP/src2_nouveau.txt"
+echo "Contenu actualisé du rapport Wisp" > "\$src2"
+"\$WISP_BIN" --no-config send "\$src2" --name "rapport.txt" > "\$DEMO_TMP/s2.log" 2>&1 &
+P2=\$!
+wait_ready "\$DEMO_TMP/s2.log"
+touch "\$DEMO_TMP/s2_ready"
+wait \$P2
+echo -e "\${GREEN}✔ [2/7] Nom en collision envoyé avec succès.\${NC}\n"
+touch "\$DEMO_TMP/s2_done"
+while [[ ! -f "\$DEMO_TMP/s3_start" ]]; do sleep 0.05; done
 
-echo -e "\n\${YELLOW}----------------------------------------------------\${NC}"
-echo -e "\${CYAN}\${BOLD}[SCÉNARIO 2/2] Test sécurité : Tentative avec faux code\${NC}"
-echo "Démarrage d'un nouvel envoi sécurisé..."
+# --- SCÉNARIO 3/7 : PREAUTH PROBE ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 3/7] Tolérance aux scans de ports / probes pré-auth\${NC}"
+src3="\$DEMO_TMP/src3_probe.txt"
+echo "Données résilientes au scan" > "\$src3"
+"\$WISP_BIN" --no-config send "\$src3" > "\$DEMO_TMP/s3.log" 2>&1 &
+P3=\$!
+wait_ready "\$DEMO_TMP/s3.log"
+touch "\$DEMO_TMP/s3_ready"
+wait \$P3
+echo -e "\${GREEN}✔ [3/7] Expéditeur resté actif malgré probe UDP, transfert réussi.\${NC}\n"
+touch "\$DEMO_TMP/s3_done"
+while [[ ! -f "\$DEMO_TMP/s4_start" ]]; do sleep 0.05; done
 
-# L'expéditeur doit rejeter la connexion et s'arrêter dès l'échec PAKE
+# --- SCÉNARIO 4/7 : WRONG CODE ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 4/7] Sécurité anti-bruteforce (Faux code PAKE)\${NC}"
+src4="\$DEMO_TMP/src4_secret.txt"
+echo "Données ultra confidentielles" > "\$src4"
 set +e
-"$WISP_BIN" --no-config send "$src2" 2>&1 | tee "$log_file2"
-sender_status=\$?
+"\$WISP_BIN" --no-config send "\$src4" > "\$DEMO_TMP/s4.log" 2>&1
+sender_st=\$?
 set -e
+echo -e "\${GREEN}✔ [4/7] Session terminée immédiatement sur échec d'authentification (Statut \$sender_st).\${NC}\n"
+touch "\$DEMO_TMP/s4_done"
+while [[ ! -f "\$DEMO_TMP/s5_start" ]]; do sleep 0.05; done
 
-echo -e "\n\${GREEN}✔ Expéditeur arrêté immédiatement suite à l'échec PAKE (Statut \$sender_status).\${NC}"
-echo -e "\${GREEN}  Politique stricte validée : 1 tentative max, aucune fuite oracle.\${NC}"
-touch "$DEMO_TMP/s2_sender_done"
+# --- SCÉNARIO 5/7 : CTRL+C CLEANUP ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 5/7] Nettoyage atomique des .part sur interruption\${NC}"
+src5="\$DEMO_TMP/src5_large.bin"
+dd if=/dev/zero of="\$src5" bs=1M count=25 status=none
+set +e
+"\$WISP_BIN" --no-config send "\$src5" > "\$DEMO_TMP/s5.log" 2>&1 &
+P5=\$!
+set -e
+wait_ready "\$DEMO_TMP/s5.log"
+touch "\$DEMO_TMP/s5_ready"
+while [[ ! -f "\$DEMO_TMP/s5_kill_sender" ]]; do sleep 0.05; done
+kill -INT \$P5 2>/dev/null || true
+wait \$P5 2>/dev/null || true
+echo -e "\${GREEN}✔ [5/7] Interruption traitée proprement côté expéditeur.\${NC}\n"
+touch "\$DEMO_TMP/s5_done"
+while [[ ! -f "\$DEMO_TMP/s6_start" ]]; do sleep 0.05; done
 
-while [[ ! -f "$DEMO_TMP/s2_receiver_done" ]]; do
-    sleep 0.1
-done
+# --- SCÉNARIO 6/7 : BIDI SANITIZATION ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 6/7] Neutralisation des injections Unicode Bidi\${NC}"
+src6="\$DEMO_TMP/src6_bidi.txt"
+echo "Fichier piégé avec override RTL" > "\$src6"
+bidi_name="report"\$'\u202e'"txt.pdf"
+"\$WISP_BIN" --no-config send "\$src6" --name "\$bidi_name" > "\$DEMO_TMP/s6.log" 2>&1 &
+P6=\$!
+wait_ready "\$DEMO_TMP/s6.log"
+touch "\$DEMO_TMP/s6_ready"
+wait \$P6
+echo -e "\${GREEN}✔ [6/7] Fichier avec nom Bidi transmis pour assainissement.\${NC}\n"
+touch "\$DEMO_TMP/s6_done"
+while [[ ! -f "\$DEMO_TMP/s7_start" ]]; do sleep 0.05; done
 
-echo -e "\n\${GREEN}\${BOLD}====================================================\${NC}"
-echo -e "\${GREEN}\${BOLD}✔ DÉMONSTRATION COMPLÉTÉE CÔTÉ EXPÉDITEUR\${NC}"
+# --- SCÉNARIO 7/7 : BENCHMARK 50 MO ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 7/7] Test de débit réel (50 Mo)\${NC}"
+src7="\$DEMO_TMP/src7_bench.bin"
+dd if=/dev/urandom of="\$src7" bs=1M count=50 status=none
+"\$WISP_BIN" --no-config send "\$src7" > "\$DEMO_TMP/s7.log" 2>&1 &
+P7=\$!
+wait_ready "\$DEMO_TMP/s7.log"
+touch "\$DEMO_TMP/s7_ready"
+wait \$P7
+echo -e "\${GREEN}✔ [7/7] 50 Mo envoyés et validés par le récepteur.\${NC}\n"
+touch "\$DEMO_TMP/s7_done"
+
+echo -e "\${GREEN}\${BOLD}====================================================\${NC}"
+echo -e "\${GREEN}\${BOLD}✔ TOUS LES 7 SCÉNARIOS TERMINÉS CÔTÉ EXPÉDITEUR     \${NC}"
 echo -e "\${GREEN}\${BOLD}====================================================\${NC}"
 echo -e "\${CYAN}ℹ Utilisez la molette de la souris pour faire défiler les logs.\${NC}"
 echo -e "\${YELLOW}Appuyez sur [Entrée] pour quitter TMUX...\${NC}"
@@ -373,7 +441,7 @@ read -r _
 tmux send-keys -t "${session}.1" Enter 2>/dev/null || true
 EOF
 
-    cat > "$DEMO_TMP/receiver.sh" <<EOF
+    cat > "$DEMO_TMP/receiver.sh" << EOF
 #!/usr/bin/env bash
 set -e
 
@@ -384,94 +452,167 @@ CYAN='\033[1;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+WISP_BIN="$WISP_BIN"
+DEMO_TMP="$DEMO_TMP"
+
+get_code_addr() {
+    local log="\$1"
+    code=\$(grep -m 1 "wisp recv" "\$log" | sed -e 's/.*wisp recv //' -e 's/ --.*//' -e 's/[[:space:]]//g')
+    addr=""
+    if grep -q "Sender address:" "\$log" 2>/dev/null; then
+        addr=\$(grep -m 1 "Sender address:" "\$log" | awk '{print \$3}')
+    fi
+}
+
 echo -e "\${YELLOW}\${BOLD}====================================================\${NC}"
 echo -e "\${YELLOW}\${BOLD}          RÉCEPTEUR (TERMINAL DROIT)                \${NC}"
 echo -e "\${YELLOW}\${BOLD}====================================================\${NC}\n"
 
-# --- SCÉNARIO 1 : TRANSFERT NOMINAL ---
-echo -e "\${CYAN}\${BOLD}[SCÉNARIO 1/2] Transfert nominal standard (mDNS + PAKE)\${NC}"
-echo "Attente de l'annonce de l'expéditeur..."
+# --- SCÉNARIO 1/7 : NOMINAL ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 1/7] Transfert nominal standard (mDNS + PAKE)\${NC}"
+while [[ ! -f "\$DEMO_TMP/s1_ready" ]]; do sleep 0.05; done
+get_code_addr "\$DEMO_TMP/s1.log"
+echo -e "Code détecté : \${GREEN}\$code\${NC}"
+dst1="\$DEMO_TMP/dst1"
+mkdir -p "\$dst1"
+"\$WISP_BIN" --no-config recv "\$code" --dir "\$dst1" --address "\$addr"
+echo -e "\${GREEN}✔ [1/7] Fichier reçu et empreinte BLAKE3 certifiée conforme !\${NC}\n"
+while [[ ! -f "\$DEMO_TMP/s1_done" ]]; do sleep 0.05; done
+sleep 0.8
+touch "\$DEMO_TMP/s2_start"
 
-code1=""
-for _ in {1..100}; do
-    if grep -q "wisp recv" "$log_file1" 2>/dev/null; then
-        code1=\$(grep -m 1 "wisp recv" "$log_file1" | sed -e 's/.*wisp recv //' -e 's/ --.*//' -e 's/[[:space:]]//g')
-        if [[ -n "\$code1" ]]; then break; fi
-    fi
-    sleep 0.1
-done
-
-if [[ -z "\$code1" ]]; then
-    echo -e "\${RED}Erreur : Code non détecté.\${NC}"
+# --- SCÉNARIO 2/7 : COLLISION NO-CLOBBER ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 2/7] Protection anti-écrasement (No-Clobber)\${NC}"
+dst2="\$DEMO_TMP/dst2"
+mkdir -p "\$dst2"
+echo "DOCUMENT ORIGINAL INVIOLABLE" > "\$dst2/rapport.txt"
+while [[ ! -f "\$DEMO_TMP/s2_ready" ]]; do sleep 0.05; done
+get_code_addr "\$DEMO_TMP/s2.log"
+echo -e "Code détecté : \${GREEN}\$code\${NC} (Fichier entrant 'rapport.txt')"
+"\$WISP_BIN" --no-config recv "\$code" --dir "\$dst2" --address "\$addr"
+if [[ -f "\$dst2/rapport (1).txt" && "\$(cat "\$dst2/rapport.txt")" == "DOCUMENT ORIGINAL INVIOLABLE" ]]; then
+    echo -e "\${GREEN}✔ [2/7] Original préservé, nouveau sauvé sous 'rapport (1).txt' !\${NC}\n"
+else
+    echo -e "\${RED}✘ [2/7] Échec de la politique No-Clobber !\${NC}\n"
     exit 1
 fi
+while [[ ! -f "\$DEMO_TMP/s2_done" ]]; do sleep 0.05; done
+sleep 0.8
+touch "\$DEMO_TMP/s3_start"
 
-echo -e "Code détecté : \${GREEN}\${BOLD}\$code1\${NC}"
-echo "Connexion et téléchargement..."
-"$WISP_BIN" --no-config recv "\$code1" --dir "$dst1"
+# --- SCÉNARIO 3/7 : PREAUTH PROBE ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 3/7] Tolérance aux scans de ports / probes pré-auth\${NC}"
+while [[ ! -f "\$DEMO_TMP/s3_ready" ]]; do sleep 0.05; done
+get_code_addr "\$DEMO_TMP/s3.log"
+port="\${addr##*:}"
+echo -e "Simulation d'un port scan non-authentifié sur le port \$port..."
+python3 -c "import socket; s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.sendto(b'MALICIOUS_PROBE', ('127.0.0.1', \$port)); s.close()"
+sleep 0.2
+dst3="\$DEMO_TMP/dst3"
+mkdir -p "\$dst3"
+echo -e "Connexion du récepteur légitime..."
+"\$WISP_BIN" --no-config recv "\$code" --dir "\$dst3" --address "\$addr"
+echo -e "\${GREEN}✔ [3/7] Transfert complété avec succès malgré le scan parasite !\${NC}\n"
+while [[ ! -f "\$DEMO_TMP/s3_done" ]]; do sleep 0.05; done
+sleep 0.8
+touch "\$DEMO_TMP/s4_start"
 
-echo -e "\n\${GREEN}✔ [RÉCEPTEUR] Fichier vérifié et sauvegardé dans :\${NC} $dst1"
-ls -lh "$dst1"
-
-while [[ ! -f "$DEMO_TMP/s1_sender_done" ]]; do
-    sleep 0.1
-done
-
-echo -e "\n\${YELLOW}Pause de 3 secondes pour observation...\${NC}"
-sleep 3
-touch "$DEMO_TMP/s2_start"
-
-# --- SCÉNARIO 2 : TENTATIVE FAUX CODE ---
-echo -e "\n\${YELLOW}----------------------------------------------------\${NC}"
-echo -e "\${CYAN}\${BOLD}[SCÉNARIO 2/2] Test sécurité : Tentative avec faux code\${NC}"
-echo "Attente du code légitime de l'expéditeur..."
-
-code2=""
-addr2=""
+# --- SCÉNARIO 4/7 : WRONG CODE ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 4/7] Sécurité anti-bruteforce (Faux code PAKE)\${NC}"
+dst4="\$DEMO_TMP/dst4"
+mkdir -p "\$dst4"
 for _ in {1..100}; do
-    if grep -q "wisp recv" "$log_file2" 2>/dev/null; then
-        code2=\$(grep -m 1 "wisp recv" "$log_file2" | sed -e 's/.*wisp recv //' -e 's/ --.*//' -e 's/[[:space:]]//g')
-        if grep -q "Sender address:" "$log_file2" 2>/dev/null; then
-            addr2=\$(grep -m 1 "Sender address:" "$log_file2" | awk '{print \$3}')
-        fi
-        if [[ -n "\$code2" ]]; then break; fi
-    fi
-    sleep 0.1
+    if grep -q "wisp recv" "\$DEMO_TMP/s4.log" 2>/dev/null; then break; fi
+    sleep 0.05
 done
-
-locator=\${code2%%-*}
+get_code_addr "\$DEMO_TMP/s4.log"
+locator="\${code%%-*}"
 bad_code="\${locator}-amber-amber-amber-amber"
-echo -e "Code légitime émis : \${CYAN}\$code2\${NC}"
-echo -e "\${RED}\${BOLD}Attaque simulée : connexion avec mot de passe erroné : \$bad_code\${NC}\n"
-
+echo -e "Code légitime : \${CYAN}\$code\${NC}"
+echo -e "\${RED}Tentative d'attaque avec mot de passe erroné : \$bad_code\${NC}"
 set +e
-if [[ -n "\$addr2" ]]; then
-    "$WISP_BIN" --no-config recv "\$bad_code" --dir "$dst2" --address "\$addr2"
-else
-    "$WISP_BIN" --no-config recv "\$bad_code" --dir "$dst2"
-fi
-recv_status=\$?
+"\$WISP_BIN" --no-config recv "\$bad_code" --dir "\$dst4" --address "\$addr" 2>/dev/null
+st=\$?
 set -e
-
-if [[ \$recv_status -ne 0 ]]; then
-    echo -e "\n\${GREEN}✔ [RÉCEPTEUR] Rejeté par PAKE (Statut \$recv_status). Sécurité prouvée !\${NC}"
+if [[ \$st -ne 0 ]]; then
+    echo -e "\${GREEN}✔ [4/7] Rejet immédiat par PAKE (Statut \$st) et session fermée sans oracle !\${NC}\n"
 else
-    echo -e "\n\${RED}✘ [RÉCEPTEUR] ERREUR : Le mauvais code a été accepté !\${NC}"
+    echo -e "\${RED}✘ [4/7] ERREUR : Le mauvais code a été accepté !\${NC}\n"
     exit 1
 fi
+while [[ ! -f "\$DEMO_TMP/s4_done" ]]; do sleep 0.05; done
+sleep 0.8
+touch "\$DEMO_TMP/s5_start"
 
-touch "$DEMO_TMP/s2_receiver_done"
-while [[ ! -f "$DEMO_TMP/s2_sender_done" ]]; do
-    sleep 0.1
-done
+# --- SCÉNARIO 5/7 : CTRL+C CLEANUP ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 5/7] Nettoyage atomique des .part sur interruption\${NC}"
+dst5="\$DEMO_TMP/dst5"
+mkdir -p "\$dst5"
+while [[ ! -f "\$DEMO_TMP/s5_ready" ]]; do sleep 0.05; done
+get_code_addr "\$DEMO_TMP/s5.log"
+echo "Démarrage du téléchargement d'un gros fichier puis envoi de SIGINT (Ctrl+C)..."
+"\$WISP_BIN" --no-config recv "\$code" --dir "\$dst5" --address "\$addr" &
+RPID=\$!
+sleep 0.3
+kill -INT \$RPID 2>/dev/null || true
+wait \$RPID 2>/dev/null || true
+touch "\$DEMO_TMP/s5_kill_sender"
+while [[ ! -f "\$DEMO_TMP/s5_done" ]]; do sleep 0.05; done
+parts=\$(find "\$dst5" -name ".wisp-*.part" | wc -l)
+if [[ \$parts -eq 0 ]]; then
+    echo -e "\${GREEN}✔ [5/7] Transfert interrompu, aucun fichier résiduel .part orphelin !\${NC}\n"
+else
+    echo -e "\${RED}✘ [5/7] Des fichiers partiels ont été abandonnés !\${NC}\n"
+    exit 1
+fi
+sleep 0.8
+touch "\$DEMO_TMP/s6_start"
 
-echo -e "\n\${GREEN}\${BOLD}====================================================\${NC}"
-echo -e "\${GREEN}\${BOLD}✔ DÉMONSTRATION COMPLÉTÉE AVEC SUCCÈS SUR LES 2 SCÉNARIOS\${NC}"
+# --- SCÉNARIO 6/7 : BIDI SANITIZATION ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 6/7] Neutralisation des injections Unicode Bidi\${NC}"
+dst6="\$DEMO_TMP/dst6"
+mkdir -p "\$dst6"
+while [[ ! -f "\$DEMO_TMP/s6_ready" ]]; do sleep 0.05; done
+get_code_addr "\$DEMO_TMP/s6.log"
+echo "Réception d'un fichier avec injection de masquage d'extension Bidi..."
+"\$WISP_BIN" --no-config recv "\$code" --dir "\$dst6" --address "\$addr"
+if [[ -f "\$dst6/report_txt.pdf" ]]; then
+    echo -e "\${GREEN}✔ [6/7] Caractère masqué neutralisé, fichier assaini en 'report_txt.pdf' !\${NC}\n"
+else
+    echo -e "\${RED}✘ [6/7] Échec : Nom non assaini : \$(ls "\$dst6")\${NC}\n"
+    exit 1
+fi
+while [[ ! -f "\$DEMO_TMP/s6_done" ]]; do sleep 0.05; done
+sleep 0.8
+touch "\$DEMO_TMP/s7_start"
+
+# --- SCÉNARIO 7/7 : BENCHMARK 50 MO ---
+echo -e "\${CYAN}\${BOLD}[SCÉNARIO 7/7] Test de débit réel (50 Mo)\${NC}"
+dst7="\$DEMO_TMP/dst7"
+mkdir -p "\$dst7"
+while [[ ! -f "\$DEMO_TMP/s7_ready" ]]; do sleep 0.05; done
+get_code_addr "\$DEMO_TMP/s7.log"
+echo "Transfert haute performance de 50 Mo en cours..."
+t0=\$(date +%s%N)
+"\$WISP_BIN" --no-config recv "\$code" --dir "\$dst7" --address "\$addr"
+t1=\$(date +%s%N)
+ms=\$(( (t1 - t0) / 1000000 ))
+speed_mb_s=\$(python3 -c "print(f'{50 / (\$ms / 1000):.1f}')" 2>/dev/null || echo "N/A")
+echo -e "\${GREEN}✔ [7/7] 50 Mo transférés en \${ms}ms (\${speed_mb_s} Mo/s) !\${NC}\n"
+while [[ ! -f "\$DEMO_TMP/s7_done" ]]; do sleep 0.05; done
+
 echo -e "\${GREEN}\${BOLD}====================================================\${NC}"
-echo -e "  \${GREEN}1. Transfert nominal :\${NC} mDNS + PAKE + QUIC + BLAKE3 vérifié"
-echo -e "  \${GREEN}2. Protection sécurité :\${NC} Rejet immédiat sur mauvais mot de passe"
+echo -e "\${GREEN}\${BOLD}✔ TOUS LES 7 SCÉNARIOS SONT VALIDÉS AVEC SUCCÈS !   \${NC}"
+echo -e "\${GREEN}\${BOLD}====================================================\${NC}"
+echo -e "  \${GREEN}1. Transfert nominal standard (mDNS + PAKE + BLAKE3)\${NC}"
+echo -e "  \${GREEN}2. Protection No-Clobber (Anti-écrasement de fichier)\${NC}"
+echo -e "  \${GREEN}3. Résilience aux scans de ports / probes pré-auth\${NC}"
+echo -e "  \${GREEN}4. Sécurité anti-bruteforce (Arrêt immédiat PAKE)\${NC}"
+echo -e "  \${GREEN}5. Nettoyage atomique des fichiers partiels sur Ctrl+C\${NC}"
+echo -e "  \${GREEN}6. Neutralisation des injections Unicode Bidi\${NC}"
+echo -e "  \${GREEN}7. Benchmark de vitesse réelle (50 Mo)\${NC}"
 echo ""
-echo -e "\${CYAN}ℹ Utilisez la molette de la souris pour faire défiler les logs.\${NC}"
+echo -e "\${CYAN}ℹ Utilisez la molette de la souris pour faire défiler les logs des 2 fenêtres.\${NC}"
 echo -e "\${YELLOW}\${BOLD}👉 Appuyez sur [Entrée] dans n'importe quel volet pour fermer TMUX...\${NC}"
 
 read -r _
@@ -497,7 +638,7 @@ EOF
     fi
 
     log_success "Session TMUX interactive démarrée !"
-    echo -e "${YELLOW}Les deux scénarios vont se jouer automatiquement côte à côte.${NC}"
+    echo -e "${YELLOW}Les 7 scénarios vont se jouer automatiquement côte à côte.${NC}"
     echo -e "${CYAN}Astuce : Utilisez la souris pour scroller ou redimensionner les panneaux si besoin.${NC}"
 
     # Attacher ou basculer selon l'environnement
@@ -521,7 +662,7 @@ EOF
         fi
     fi
 
-    log_success "Démonstration des 2 scénarios terminée avec succès !"
+    log_success "Démonstration des 7 scénarios terminée avec succès !"
 }
 
 # ------------------------------------------------------------------------------

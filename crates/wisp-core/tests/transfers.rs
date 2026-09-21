@@ -322,3 +322,152 @@ async fn directory_collision_preserves_existing_directory() {
     );
 }
 
+#[tokio::test]
+async fn directory_source_mutation_aborts_and_cleans_up() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let dir_path = source.path().join("mutable_dir");
+    std::fs::create_dir(&dir_path).unwrap();
+    let file_path = dir_path.join("data.bin");
+    std::fs::write(&file_path, b"initial payload").unwrap();
+
+    let mutate = file_path.clone();
+    let handler: EventHandler = Arc::new(move |event| {
+        if matches!(event, Event::Ready { .. }) {
+            // Mutate file length after scan has occurred
+            std::fs::write(&mutate, b"initial payload with unexpected trailing data").unwrap();
+        }
+    });
+
+    let (sender, code, address) = start(&dir_path, handler).await;
+    let recv_res = receive_file(receiver(code, address, destination.path()), quiet()).await;
+    assert!(recv_res.is_err());
+    assert!(sender.await.unwrap().is_err());
+    assert_eq!(std::fs::read_dir(destination.path()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn directory_with_symlinks_skips_and_delivers_cleanly() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let dir_path = source.path().join("symlink_dir");
+    std::fs::create_dir(&dir_path).unwrap();
+
+    let real_file = dir_path.join("real.txt");
+    std::fs::write(&real_file, b"genuine content").unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let _ = symlink(&real_file, dir_path.join("internal_link"));
+        let _ = symlink("/etc/passwd", dir_path.join("evil_external_link"));
+        let _ = symlink(dir_path.join("non_existent"), dir_path.join("broken_link"));
+    }
+
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let warnings_clone = Arc::clone(&warnings);
+    let handler: EventHandler = Arc::new(move |event| {
+        if let Event::Warning { message } = event {
+            warnings_clone.lock().unwrap().push(message);
+        }
+    });
+
+    let (sender, code, address) = start(&dir_path, handler).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert_eq!(sent.hash, receipt.hash);
+    let dest_dir = destination.path().join("symlink_dir");
+    assert!(dest_dir.is_dir());
+    assert_eq!(
+        std::fs::read(dest_dir.join("real.txt")).unwrap(),
+        b"genuine content"
+    );
+
+    #[cfg(unix)]
+    {
+        assert!(!dest_dir.join("internal_link").exists());
+        assert!(!dest_dir.join("evil_external_link").exists());
+        assert!(!dest_dir.join("broken_link").exists());
+        let logged_warnings = warnings.lock().unwrap();
+        assert!(logged_warnings.iter().any(|w| w.contains("skipping symlink")));
+    }
+}
+
+#[tokio::test]
+async fn directory_deep_nesting_and_unicode_names() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let root = source.path().join("racine élève");
+
+    let mut current = root.clone();
+    for i in 1..=12 {
+        current = current.join(format!("niveau {i} dossier"));
+    }
+    std::fs::create_dir_all(&current).unwrap();
+
+    let target_file = current.join("résumé d'été 2026.txt");
+    std::fs::write(&target_file, "données chiffrées & validées".as_bytes()).unwrap();
+
+    let (sender, code, address) = start(&root, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert_eq!(sent.hash, receipt.hash);
+    let mut dest_current = destination.path().join("racine élève");
+    for i in 1..=12 {
+        dest_current = dest_current.join(format!("niveau {i} dossier"));
+    }
+    assert_eq!(
+        std::fs::read(dest_current.join("résumé d'été 2026.txt")).unwrap(),
+        "données chiffrées & validées".as_bytes()
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn directory_executable_permissions_preserved() {
+    use std::os::unix::fs::PermissionsExt;
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let dir = source.path().join("bin_dir");
+    std::fs::create_dir(&dir).unwrap();
+
+    let script = dir.join("run.sh");
+    std::fs::write(&script, b"#!/bin/sh\necho hello").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let regular = dir.join("readme.txt");
+    std::fs::write(&regular, b"just text").unwrap();
+    std::fs::set_permissions(&regular, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let (sender, code, address) = start(&dir, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert_eq!(sent.hash, receipt.hash);
+    let dest_dir = destination.path().join("bin_dir");
+    let dest_script_mode = std::fs::metadata(dest_dir.join("run.sh"))
+        .unwrap()
+        .permissions()
+        .mode();
+    let dest_regular_mode = std::fs::metadata(dest_dir.join("readme.txt"))
+        .unwrap()
+        .permissions()
+        .mode();
+
+    assert_ne!(dest_script_mode & 0o111, 0, "run.sh should be executable");
+    assert_eq!(
+        dest_regular_mode & 0o111,
+        0,
+        "readme.txt should not be executable"
+    );
+}
+
+

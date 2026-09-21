@@ -970,4 +970,68 @@ fn single_file_metadata_and_receipt_wire_compatibility_with_v0_2() {
     assert!(!receipt_json.contains("is_directory"), "v0.2 single-file receipt must not contain is_directory");
 }
 
+#[tokio::test]
+async fn directory_out_of_order_frame_rejected_and_cleaned_up() {
+    let (sc, cc) = connections().await;
+    let code = PairingCode::generate();
+    let destination = tempfile::tempdir().unwrap();
+    let options = ReceiveOptions::new(code.clone(), destination.path().into());
+
+    let server = tokio::spawn(async move {
+        let (mut s, mut _r) = raw_sender(&sc, &code).await;
+        write_frame(
+            &mut s,
+            &FileMeta {
+                name: "dir_desync".into(),
+                size: 10,
+                hash: "0".repeat(64),
+                is_directory: true,
+                entries_count: Some(1),
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        // Rogue frame: FileEnd frame sent unexpectedly before any FileHeader
+        write_frame(
+            &mut s,
+            &DirFrame::FileEnd {
+                hash: "0".repeat(64),
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        let _ = s.stopped().await;
+    });
+
+    let (mut s, mut r) = cc.open_bi().await.unwrap();
+    let result = receiver_protocol(
+        &options,
+        &mut s,
+        &mut r,
+        &channel_binding(&cc).unwrap(),
+        &silent(),
+    )
+    .await;
+
+    assert!(result.is_err());
+    let err = format!("{:#}", result.unwrap_err());
+    assert!(
+        err.contains("unexpected FileEnd frame outside file transfer"),
+        "expected desync error, got: {err}"
+    );
+
+    assert_eq!(
+        std::fs::read_dir(destination.path()).unwrap().count(),
+        0,
+        "staging directory was not cleaned up upon desync"
+    );
+    server.abort();
+    let _ = server.await;
+}
+
+
 

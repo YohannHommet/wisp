@@ -146,6 +146,7 @@ impl PendingDirectory {
     pub fn commit(mut self, name: &str) -> Result<PublishedFile> {
         let temp = self.temp_dir.take().expect("temp_dir present");
         let staging_path = temp.path().to_owned();
+        let _ = temp.keep();
         let safe = sanitize(name);
         for index in 0..10_000 {
             let candidate_name = collision_name(&safe, index);
@@ -159,33 +160,53 @@ impl PendingDirectory {
                     Ok(()) => {
                         if let Err(err) = std::fs::rename(&staging_path, &target_path) {
                             let _ = std::fs::remove_dir(&target_path);
+                            let _ = std::fs::remove_dir_all(&staging_path);
                             return Err(err).context("publishing received directory");
                         }
-                        std::mem::forget(temp);
+                        let mut sync_warning = None;
+                        if let Ok(dir_file) = std::fs::File::open(&self.dest_dir) {
+                            if let Err(err) = dir_file.sync_all() {
+                                sync_warning = Some(format!(
+                                    "directory saved at {}, but syncing its parent directory failed: {err}",
+                                    target_path.display()
+                                ));
+                            }
+                        } else {
+                            sync_warning = Some(format!(
+                                "directory saved at {}, but opening its parent directory for sync failed",
+                                target_path.display()
+                            ));
+                        }
                         return Ok(PublishedFile {
                             path: target_path,
-                            sync_warning: None,
+                            sync_warning,
                         });
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                    Err(err) => return Err(err).context("reserving destination directory"),
+                    Err(err) => {
+                        let _ = std::fs::remove_dir_all(&staging_path);
+                        return Err(err).context("reserving destination directory");
+                    }
                 }
             }
             #[cfg(not(unix))]
             {
                 match std::fs::rename(&staging_path, &target_path) {
                     Ok(()) => {
-                        std::mem::forget(temp);
                         return Ok(PublishedFile {
                             path: target_path,
                             sync_warning: None,
                         });
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                    Err(err) => return Err(err).context("publishing received directory"),
+                    Err(err) => {
+                        let _ = std::fs::remove_dir_all(&staging_path);
+                        return Err(err).context("publishing received directory");
+                    }
                 }
             }
         }
+        let _ = std::fs::remove_dir_all(&staging_path);
         bail!("too many items named {safe}; choose another destination directory")
     }
 }

@@ -6,7 +6,7 @@ use crate::{
     storage::{sanitize, sanitize_relative_path, PendingDirectory, PendingFile},
     transport, PairingCode,
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use quinn::{Endpoint, RecvStream, SendStream, TokioRuntime};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -137,10 +137,10 @@ struct FileMeta {
     name: String,
     size: u64,
     hash: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     is_directory: bool,
-    #[serde(default)]
-    entries_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entries_count: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -149,7 +149,7 @@ struct VerifiedReceipt {
     name: String,
     size: u64,
     hash: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     is_directory: bool,
 }
 
@@ -221,7 +221,7 @@ impl PreparedFile {
                 size,
                 hash: hasher.finalize().to_hex().to_string(),
                 is_directory: false,
-                entries_count: 1,
+                entries_count: None,
             },
         })
     }
@@ -363,9 +363,17 @@ fn scan_directory(
 
             let wire_path = rel_entry
                 .components()
-                .map(|c| c.as_os_str().to_str().unwrap())
-                .collect::<Vec<_>>()
+                .map(|c| {
+                    c.as_os_str()
+                        .to_str()
+                        .ok_or_else(|| anyhow!("non-UTF-8 path component in '{}'", rel_entry.display()))
+                })
+                .collect::<Result<Vec<_>, _>>()?
                 .join("/");
+
+            // Validate that the relative path complies with wire security rules
+            sanitize_relative_path(&wire_path)
+                .with_context(|| format!("source directory contains unportable or unsafe path '{}'", wire_path))?;
 
             if file_type.is_dir() {
                 entries.push(DirScanEntry::Directory {
@@ -753,7 +761,8 @@ async fn sender_file_protocol(
     let receipt: VerifiedReceipt = read_frame(recv, timeouts.io()).await
         .context("delivery unconfirmed: receiver did not acknowledge a verified save; check the destination before retrying")?;
     expect_eof(recv, timeouts.io()).await?;
-    if receipt.size != source.meta.size
+    if receipt.is_directory
+        || receipt.size != source.meta.size
         || receipt.hash != source.meta.hash
         || receipt.name.is_empty()
         || receipt.name.len() > 240
@@ -795,7 +804,7 @@ async fn sender_dir_protocol(
         size: dir.total_size,
         hash: String::new(),
         is_directory: true,
-        entries_count: dir.entries.len() as u64,
+        entries_count: Some(dir.entries.len() as u64),
     };
     write_frame(send, &meta, timeouts.io()).await?;
 
@@ -921,7 +930,8 @@ async fn sender_dir_protocol(
         .context("delivery unconfirmed: receiver did not acknowledge a verified save; check the destination before retrying")?;
     expect_eof(recv, timeouts.io()).await?;
 
-    if receipt.size != dir.total_size
+    if !receipt.is_directory
+        || receipt.size != dir.total_size
         || receipt.hash != root_hash
         || receipt.name.is_empty()
         || receipt.name.len() > 240
@@ -1101,7 +1111,10 @@ async fn receiver_dir_protocol(
     recv: &mut RecvStream,
     events: &EventHandler,
 ) -> Result<TransferReceipt> {
-    if meta.entries_count > 100_000 {
+    let expected_entries = meta
+        .entries_count
+        .ok_or_else(|| anyhow!("directory metadata missing entries_count"))?;
+    if expected_entries > 100_000 {
         bail!("directory exceeds maximum entries limit (100,000)");
     }
     tokio::fs::create_dir_all(&options.directory)
@@ -1116,6 +1129,8 @@ async fn receiver_dir_protocol(
     tree_hasher.update(b"WISP_DIR_V1\0");
 
     let mut received = 0u64;
+    let mut received_entries = 0u64;
+    let mut last_path: Option<String> = None;
     let mut progress = Progress::new(meta.size, events);
     let mut window_start = Instant::now();
     let mut window_start_received = 0u64;
@@ -1124,6 +1139,20 @@ async fn receiver_dir_protocol(
         let frame: DirFrame = read_frame(recv, options.timeouts.io()).await?;
         match frame {
             DirFrame::Dir { path } => {
+                received_entries += 1;
+                if received_entries > 100_000 || received_entries > expected_entries {
+                    bail!(
+                        "directory entries exceed declared entries count ({}) or safety cap (100,000)",
+                        expected_entries
+                    );
+                }
+                if let Some(ref prev) = last_path {
+                    if &path <= prev {
+                        bail!("directory stream framing error: non-monotonic path ordering");
+                    }
+                }
+                last_path = Some(path.clone());
+
                 let safe_path = sanitize_relative_path(&path)?;
                 pending_dir.create_subdir(&safe_path)?;
                 tree_hasher.update(b"D\0");
@@ -1135,8 +1164,25 @@ async fn receiver_dir_protocol(
                 size,
                 executable,
             } => {
+                received_entries += 1;
+                if received_entries > 100_000 || received_entries > expected_entries {
+                    bail!(
+                        "directory entries exceed declared entries count ({}) or safety cap (100,000)",
+                        expected_entries
+                    );
+                }
+                if let Some(ref prev) = last_path {
+                    if &path <= prev {
+                        bail!("directory stream framing error: non-monotonic path ordering");
+                    }
+                }
+                last_path = Some(path.clone());
+
                 let safe_path = sanitize_relative_path(&path)?;
-                if received + size > meta.size {
+                let new_total = received
+                    .checked_add(size)
+                    .ok_or_else(|| anyhow!("received byte count overflow"))?;
+                if new_total > meta.size {
                     bail!("directory files exceed declared total size");
                 }
                 let mut out_file = pending_dir.open_file(&safe_path, executable)?;
@@ -1207,6 +1253,20 @@ async fn receiver_dir_protocol(
                 bail!("unexpected FileEnd frame outside file transfer");
             }
             DirFrame::EndDir { root_hash } => {
+                if received != meta.size {
+                    bail!(
+                        "directory received bytes ({}) do not match declared size ({})",
+                        received,
+                        meta.size
+                    );
+                }
+                if received_entries != expected_entries {
+                    bail!(
+                        "directory received entries ({}) do not match declared entries count ({})",
+                        received_entries,
+                        expected_entries
+                    );
+                }
                 expect_eof(recv, options.timeouts.io()).await?;
                 events(Event::Verifying);
                 let computed_root_hash = tree_hasher.finalize().to_hex().to_string();

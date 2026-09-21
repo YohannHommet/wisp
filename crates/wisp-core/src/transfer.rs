@@ -3,7 +3,7 @@
 use crate::{
     config::Timeouts,
     discovery, pake,
-    storage::{sanitize, PendingFile},
+    storage::{sanitize, sanitize_relative_path, PendingDirectory, PendingFile},
     transport, PairingCode,
 };
 use anyhow::{bail, Context, Result};
@@ -12,7 +12,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -45,6 +45,8 @@ pub enum Event {
         discovery: bool,
         expires_in: u64,
         size: u64,
+        #[serde(default)]
+        is_directory: bool,
     },
     Discovering,
     Connecting {
@@ -114,6 +116,8 @@ pub struct TransferReceipt {
         serialize_with = "serialize_saved_path"
     )]
     pub saved_to: Option<PathBuf>,
+    #[serde(default)]
+    pub is_directory: bool,
 }
 
 fn serialize_saved_path<S: serde::Serializer>(
@@ -133,6 +137,10 @@ struct FileMeta {
     name: String,
     size: u64,
     hash: String,
+    #[serde(default)]
+    is_directory: bool,
+    #[serde(default)]
+    entries_count: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -141,6 +149,27 @@ struct VerifiedReceipt {
     name: String,
     size: u64,
     hash: String,
+    #[serde(default)]
+    is_directory: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum DirFrame {
+    Dir {
+        path: String,
+    },
+    FileHeader {
+        path: String,
+        size: u64,
+        executable: bool,
+    },
+    FileEnd {
+        hash: String,
+    },
+    EndDir {
+        root_hash: String,
+    },
 }
 
 struct PreparedFile {
@@ -149,14 +178,6 @@ struct PreparedFile {
 }
 impl PreparedFile {
     async fn open(options: &SendOptions, events: &EventHandler) -> Result<Self> {
-        // Reject directories/devices/FIFOs before opening; validate the opened handle too.
-        if !tokio::fs::metadata(&options.path)
-            .await
-            .with_context(|| format!("cannot read {}", options.path.display()))?
-            .is_file()
-        {
-            bail!("send accepts a regular file; archive folders before sending");
-        }
         let mut file = File::open(&options.path)
             .await
             .context("opening source file")?;
@@ -199,16 +220,201 @@ impl PreparedFile {
                 name,
                 size,
                 hash: hasher.finalize().to_hex().to_string(),
+                is_directory: false,
+                entries_count: 1,
             },
         })
     }
+}
+
+enum DirScanEntry {
+    Directory {
+        rel_path: String,
+    },
+    File {
+        rel_path: String,
+        size: u64,
+        executable: bool,
+    },
+}
+
+impl DirScanEntry {
+    fn wire_path(&self) -> &str {
+        match self {
+            Self::Directory { rel_path } => rel_path,
+            Self::File { rel_path, .. } => rel_path,
+        }
+    }
+}
+
+struct PreparedDirectory {
+    root: PathBuf,
+    name: String,
+    total_size: u64,
+    entries: Vec<DirScanEntry>,
+}
+
+impl PreparedDirectory {
+    async fn open(options: &SendOptions, events: &EventHandler) -> Result<Self> {
+        let root = options.path.canonicalize().with_context(|| {
+            format!("resolving directory path {}", options.path.display())
+        })?;
+        let name = sanitize(options.display_name.as_deref().unwrap_or_else(|| {
+            options
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("directory")
+        }));
+        events(Event::Preparing { name: name.clone() });
+
+        let root_for_scan = root.clone();
+        let events_for_scan = Arc::clone(events);
+        let (entries, total_size) = tokio::task::spawn_blocking(move || {
+            scan_directory(&root_for_scan, &events_for_scan)
+        })
+        .await
+        .context("directory scan panicked")??;
+
+        Ok(Self {
+            root,
+            name,
+            total_size,
+            entries,
+        })
+    }
+}
+
+enum PreparedSource {
+    File(PreparedFile),
+    Directory(PreparedDirectory),
+}
+
+impl PreparedSource {
+    async fn open(options: &SendOptions, events: &EventHandler) -> Result<Self> {
+        let meta = tokio::fs::metadata(&options.path)
+            .await
+            .with_context(|| format!("cannot read {}", options.path.display()))?;
+        if meta.is_file() {
+            Ok(Self::File(PreparedFile::open(options, events).await?))
+        } else if meta.is_dir() {
+            Ok(Self::Directory(PreparedDirectory::open(options, events).await?))
+        } else {
+            bail!("send accepts a regular file or directory; special files are not supported");
+        }
+    }
+
+    fn size(&self) -> u64 {
+        match self {
+            Self::File(f) => f.meta.size,
+            Self::Directory(d) => d.total_size,
+        }
+    }
+
+    fn is_directory(&self) -> bool {
+        matches!(self, Self::Directory(_))
+    }
+}
+
+fn scan_directory(
+    root: &Path,
+    events: &EventHandler,
+) -> Result<(Vec<DirScanEntry>, u64)> {
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(PathBuf::new());
+    let mut entries = Vec::new();
+    let mut total_size: u64 = 0;
+
+    while let Some(rel_dir) = queue.pop_front() {
+        let abs_dir = root.join(&rel_dir);
+        let read_dir = std::fs::read_dir(&abs_dir)
+            .with_context(|| format!("reading directory {}", abs_dir.display()))?;
+
+        for entry in read_dir {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_str().ok_or_else(|| {
+                anyhow::anyhow!("non-UTF-8 filename in directory: {:?}", file_name)
+            })?;
+            let rel_entry = if rel_dir.as_os_str().is_empty() {
+                PathBuf::from(file_name_str)
+            } else {
+                rel_dir.join(file_name_str)
+            };
+
+            let depth = rel_entry.components().count();
+            if depth > 32 {
+                bail!(
+                    "directory nesting exceeds maximum depth of 32 levels at {}",
+                    rel_entry.display()
+                );
+            }
+
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                events(Event::Warning {
+                    message: format!(
+                        "skipping symlink '{}'; symlinks are not transferred",
+                        rel_entry.display()
+                    ),
+                });
+                continue;
+            }
+
+            let wire_path = rel_entry
+                .components()
+                .map(|c| c.as_os_str().to_str().unwrap())
+                .collect::<Vec<_>>()
+                .join("/");
+
+            if file_type.is_dir() {
+                entries.push(DirScanEntry::Directory {
+                    rel_path: wire_path,
+                });
+                queue.push_back(rel_entry);
+            } else if file_type.is_file() {
+                let metadata = entry.metadata()?;
+                let size = metadata.len();
+                total_size = total_size
+                    .checked_add(size)
+                    .ok_or_else(|| anyhow::anyhow!("directory total size exceeds 64-bit integer"))?;
+                if total_size > MAX_FILE_SIZE {
+                    bail!("directory total size exceeds maximum limit of 1 TiB");
+                }
+                #[cfg(unix)]
+                let executable = {
+                    use std::os::unix::fs::PermissionsExt;
+                    metadata.permissions().mode() & 0o111 != 0
+                };
+                #[cfg(not(unix))]
+                let executable = false;
+
+                entries.push(DirScanEntry::File {
+                    rel_path: wire_path,
+                    size,
+                    executable,
+                });
+            } else {
+                events(Event::Warning {
+                    message: format!("skipping special file '{}'", rel_entry.display()),
+                });
+            }
+
+            if entries.len() > 100_000 {
+                bail!("directory contains more than 100,000 entries");
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| a.wire_path().cmp(b.wire_path()));
+    Ok((entries, total_size))
 }
 
 /// Create a fresh code, bind a single LAN interface and serve one receiver.
 /// Dropping this future withdraws discovery and closes its endpoint.
 pub async fn send_file(options: SendOptions, events: EventHandler) -> Result<TransferReceipt> {
     options.timeouts.validate()?;
-    let mut source = PreparedFile::open(&options, &events).await?;
+    let mut source = PreparedSource::open(&options, &events).await?;
     let ip = match options.bind {
         Some(ip) if !ip.is_unspecified() && !ip.is_multicast() && !ip.is_broadcast() => ip,
         Some(_) => bail!("--bind must be a specific local IPv4 address"),
@@ -239,7 +445,8 @@ pub async fn send_file(options: SendOptions, events: EventHandler) -> Result<Tra
         address,
         discovery: advert.is_some(),
         expires_in: options.timeouts.wait,
-        size: source.meta.size,
+        size: source.size(),
+        is_directory: source.is_directory(),
     });
 
     const MAX_PRE_AUTH_RETRIES: usize = 3;
@@ -460,7 +667,7 @@ fn channel_binding(conn: &quinn::Connection) -> Result<[u8; 32]> {
 
 async fn sender_protocol(
     code: &PairingCode,
-    source: &mut PreparedFile,
+    source: &mut PreparedSource,
     send: &mut SendStream,
     recv: &mut RecvStream,
     binding: &[u8; 32],
@@ -482,6 +689,24 @@ async fn sender_protocol(
     if &ready != b"GET" {
         bail!("invalid receiver request");
     }
+
+    match source {
+        PreparedSource::File(file) => {
+            sender_file_protocol(file, send, recv, timeouts, events).await
+        }
+        PreparedSource::Directory(dir) => {
+            sender_dir_protocol(dir, send, recv, timeouts, events).await
+        }
+    }
+}
+
+async fn sender_file_protocol(
+    source: &mut PreparedFile,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+    timeouts: &Timeouts,
+    events: &EventHandler,
+) -> Result<TransferReceipt> {
     write_frame(send, &source.meta, timeouts.io()).await?;
     let mut progress = Progress::new(source.meta.size, events);
     let mut buf = vec![0; CHUNK];
@@ -554,6 +779,176 @@ async fn sender_protocol(
         size: receipt.size,
         hash: receipt.hash,
         saved_to: None,
+        is_directory: false,
+    })
+}
+
+async fn sender_dir_protocol(
+    dir: &mut PreparedDirectory,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+    timeouts: &Timeouts,
+    events: &EventHandler,
+) -> Result<TransferReceipt> {
+    let meta = FileMeta {
+        name: dir.name.clone(),
+        size: dir.total_size,
+        hash: String::new(),
+        is_directory: true,
+        entries_count: dir.entries.len() as u64,
+    };
+    write_frame(send, &meta, timeouts.io()).await?;
+
+    let mut progress = Progress::new(dir.total_size, events);
+    let mut buf = vec![0; CHUNK];
+    let mut sent = 0u64;
+    let mut tree_hasher = blake3::Hasher::new();
+    tree_hasher.update(b"WISP_DIR_V1\0");
+    let mut window_start = Instant::now();
+    let mut window_start_sent = 0u64;
+
+    for entry in &dir.entries {
+        match entry {
+            DirScanEntry::Directory { rel_path } => {
+                tree_hasher.update(b"D\0");
+                tree_hasher.update(&(rel_path.len() as u32).to_be_bytes());
+                tree_hasher.update(rel_path.as_bytes());
+                write_frame(
+                    send,
+                    &DirFrame::Dir {
+                        path: rel_path.clone(),
+                    },
+                    timeouts.io(),
+                )
+                .await?;
+            }
+            DirScanEntry::File {
+                rel_path,
+                size,
+                executable,
+            } => {
+                let abs_path = dir.root.join(rel_path);
+                let mut file = File::open(&abs_path)
+                    .await
+                    .with_context(|| format!("cannot open source file {}", abs_path.display()))?;
+                let current_len = file.metadata().await?.len();
+                if current_len != *size {
+                    bail!(
+                        "source file {} changed while transferring",
+                        abs_path.display()
+                    );
+                }
+
+                write_frame(
+                    send,
+                    &DirFrame::FileHeader {
+                        path: rel_path.clone(),
+                        size: *size,
+                        executable: *executable,
+                    },
+                    timeouts.io(),
+                )
+                .await?;
+
+                let mut file_hasher = blake3::Hasher::new();
+                let mut file_sent = 0u64;
+                while file_sent < *size {
+                    let to_read = ((*size - file_sent).min(CHUNK as u64)) as usize;
+                    let n = file
+                        .read(&mut buf[..to_read])
+                        .await
+                        .context("reading file chunk")?;
+                    if n == 0 {
+                        bail!(
+                            "source file {} truncated unexpectedly",
+                            abs_path.display()
+                        );
+                    }
+                    file_hasher.update(&buf[..n]);
+                    tokio::time::timeout(timeouts.io(), send.write_all(&buf[..n]))
+                        .await
+                        .context("sending stalled")??;
+                    file_sent += n as u64;
+                    sent += n as u64;
+                    progress.update(sent);
+
+                    let elapsed = window_start.elapsed();
+                    if elapsed >= timeouts.io() {
+                        let bytes_in_window = sent - window_start_sent;
+                        let remaining_expected = dir.total_size - window_start_sent;
+                        let min_required = MIN_THROUGHPUT_PER_WINDOW.min(remaining_expected);
+                        if bytes_in_window < min_required && sent < dir.total_size {
+                            bail!("transfer rate too slow; aborted to prevent connection starvation");
+                        }
+                        window_start = Instant::now();
+                        window_start_sent = sent;
+                    }
+                }
+
+                let file_hash = file_hasher.finalize().to_hex().to_string();
+                tree_hasher.update(b"F\0");
+                tree_hasher.update(&(rel_path.len() as u32).to_be_bytes());
+                tree_hasher.update(rel_path.as_bytes());
+                tree_hasher.update(&size.to_be_bytes());
+                tree_hasher.update(if *executable { &[1u8] } else { &[0u8] });
+                tree_hasher.update(file_hash.as_bytes());
+
+                write_frame(
+                    send,
+                    &DirFrame::FileEnd {
+                        hash: file_hash,
+                    },
+                    timeouts.io(),
+                )
+                .await?;
+            }
+        }
+    }
+
+    let root_hash = tree_hasher.finalize().to_hex().to_string();
+    write_frame(
+        send,
+        &DirFrame::EndDir {
+            root_hash: root_hash.clone(),
+        },
+        timeouts.io(),
+    )
+    .await?;
+    send.finish()?;
+
+    events(Event::AwaitingReceipt);
+    let receipt: VerifiedReceipt = read_frame(recv, timeouts.io()).await
+        .context("delivery unconfirmed: receiver did not acknowledge a verified save; check the destination before retrying")?;
+    expect_eof(recv, timeouts.io()).await?;
+
+    if receipt.size != dir.total_size
+        || receipt.hash != root_hash
+        || receipt.name.is_empty()
+        || receipt.name.len() > 240
+        || receipt.name.contains(['/', '\\'])
+        || receipt.name == "."
+        || receipt.name == ".."
+        || receipt.name.chars().any(|c| {
+            c.is_control()
+                || matches!(
+                    c,
+                    '\u{200e}'
+                        | '\u{200f}'
+                        | '\u{061c}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
+        })
+    {
+        bail!("invalid delivery receipt; transfer not confirmed");
+    }
+
+    Ok(TransferReceipt {
+        name: receipt.name,
+        size: receipt.size,
+        hash: receipt.hash,
+        saved_to: None,
+        is_directory: true,
     })
 }
 
@@ -578,10 +973,26 @@ async fn receiver_protocol(
     let meta: FileMeta = read_frame(recv, options.timeouts.io()).await?;
     if meta.size > options.max_size {
         bail!(
-            "file exceeds the receive limit of {} bytes; use --max-size to change it",
+            "{} exceeds the receive limit of {} bytes; use --max-size to change it",
+            if meta.is_directory { "directory" } else { "file" },
             options.max_size
         );
     }
+
+    if meta.is_directory {
+        receiver_dir_protocol(options, &meta, send, recv, events).await
+    } else {
+        receiver_file_protocol(options, &meta, send, recv, events).await
+    }
+}
+
+async fn receiver_file_protocol(
+    options: &ReceiveOptions,
+    meta: &FileMeta,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+    events: &EventHandler,
+) -> Result<TransferReceipt> {
     if meta.hash.len() != 64
         || !meta
             .hash
@@ -652,6 +1063,7 @@ async fn receiver_protocol(
         name: name.clone(),
         size: meta.size,
         hash: meta.hash.clone(),
+        is_directory: false,
     };
     let ack = async {
         write_frame(send, &receipt, options.timeouts.io()).await?;
@@ -666,7 +1078,6 @@ async fn receiver_protocol(
     }
     .await;
     if let Err(err) = ack {
-        // Local save is a fact even if the final message is lost. Never delete it.
         events(Event::Warning {
             message: format!(
                 "file saved at {}, but sender confirmation is uncertain: {err:#}",
@@ -677,9 +1088,181 @@ async fn receiver_protocol(
     Ok(TransferReceipt {
         name,
         size: meta.size,
-        hash: meta.hash,
+        hash: meta.hash.clone(),
         saved_to: Some(path),
+        is_directory: false,
     })
+}
+
+async fn receiver_dir_protocol(
+    options: &ReceiveOptions,
+    meta: &FileMeta,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+    events: &EventHandler,
+) -> Result<TransferReceipt> {
+    if meta.entries_count > 100_000 {
+        bail!("directory exceeds maximum entries limit (100,000)");
+    }
+    tokio::fs::create_dir_all(&options.directory)
+        .await
+        .context("creating destination directory")?;
+    let directory = tokio::fs::canonicalize(&options.directory)
+        .await
+        .context("resolving destination directory")?;
+
+    let pending_dir = PendingDirectory::create(&directory)?;
+    let mut tree_hasher = blake3::Hasher::new();
+    tree_hasher.update(b"WISP_DIR_V1\0");
+
+    let mut received = 0u64;
+    let mut progress = Progress::new(meta.size, events);
+    let mut window_start = Instant::now();
+    let mut window_start_received = 0u64;
+
+    loop {
+        let frame: DirFrame = read_frame(recv, options.timeouts.io()).await?;
+        match frame {
+            DirFrame::Dir { path } => {
+                let safe_path = sanitize_relative_path(&path)?;
+                pending_dir.create_subdir(&safe_path)?;
+                tree_hasher.update(b"D\0");
+                tree_hasher.update(&(path.len() as u32).to_be_bytes());
+                tree_hasher.update(path.as_bytes());
+            }
+            DirFrame::FileHeader {
+                path,
+                size,
+                executable,
+            } => {
+                let safe_path = sanitize_relative_path(&path)?;
+                if received + size > meta.size {
+                    bail!("directory files exceed declared total size");
+                }
+                let mut out_file = pending_dir.open_file(&safe_path, executable)?;
+                let mut file_hasher = blake3::Hasher::new();
+                let mut file_received = 0u64;
+
+                while file_received < size {
+                    let limit = ((size - file_received).min(CHUNK as u64)) as usize;
+                    let chunk = tokio::time::timeout(
+                        options.timeouts.io(),
+                        recv.read_chunk(limit, true),
+                    )
+                    .await
+                    .context("receiving stalled; temporary file removed")??
+                    .context("sender disconnected before all bytes arrived")?;
+                    if chunk.bytes.is_empty() {
+                        continue;
+                    }
+                    file_hasher.update(&chunk.bytes);
+                    use std::io::Write;
+                    out_file
+                        .write_all(&chunk.bytes)
+                        .context("writing received file chunk")?;
+                    file_received += chunk.bytes.len() as u64;
+                    received += chunk.bytes.len() as u64;
+                    progress.update(received);
+
+                    let elapsed = window_start.elapsed();
+                    if elapsed >= options.timeouts.io() {
+                        let bytes_in_window = received - window_start_received;
+                        let remaining_expected = meta.size - window_start_received;
+                        let min_required = MIN_THROUGHPUT_PER_WINDOW.min(remaining_expected);
+                        if bytes_in_window < min_required && received < meta.size {
+                            bail!("transfer rate too slow; aborted to prevent connection starvation");
+                        }
+                        window_start = Instant::now();
+                        window_start_received = received;
+                    }
+                }
+
+                out_file.sync_data().context("syncing received file")?;
+                drop(out_file);
+
+                let end: DirFrame = read_frame(recv, options.timeouts.io()).await?;
+                let DirFrame::FileEnd {
+                    hash: expected_file_hash,
+                } = end
+                else {
+                    bail!("protocol error: expected FileEnd frame");
+                };
+
+                let computed_file_hash = file_hasher.finalize().to_hex().to_string();
+                if computed_file_hash != expected_file_hash {
+                    bail!(
+                        "file integrity check failed for {}",
+                        safe_path.display()
+                    );
+                }
+
+                tree_hasher.update(b"F\0");
+                tree_hasher.update(&(path.len() as u32).to_be_bytes());
+                tree_hasher.update(path.as_bytes());
+                tree_hasher.update(&size.to_be_bytes());
+                tree_hasher.update(if executable { &[1u8] } else { &[0u8] });
+                tree_hasher.update(computed_file_hash.as_bytes());
+            }
+            DirFrame::FileEnd { .. } => {
+                bail!("unexpected FileEnd frame outside file transfer");
+            }
+            DirFrame::EndDir { root_hash } => {
+                expect_eof(recv, options.timeouts.io()).await?;
+                events(Event::Verifying);
+                let computed_root_hash = tree_hasher.finalize().to_hex().to_string();
+                if computed_root_hash != root_hash {
+                    bail!("directory integrity verification failed");
+                }
+                let name_for_commit = meta.name.clone();
+                let published =
+                    tokio::task::spawn_blocking(move || pending_dir.commit(&name_for_commit))
+                        .await
+                        .context("directory publication task panicked")??;
+                if let Some(warning) = published.sync_warning {
+                    events(Event::Warning { message: warning });
+                }
+                let path = published.path;
+                let name = path
+                    .file_name()
+                    .context("saved path has no filename")?
+                    .to_string_lossy()
+                    .into_owned();
+                let receipt = VerifiedReceipt {
+                    name: name.clone(),
+                    size: received,
+                    hash: root_hash.clone(),
+                    is_directory: true,
+                };
+                let ack = async {
+                    write_frame(send, &receipt, options.timeouts.io()).await?;
+                    send.finish()?;
+                    let stopped = tokio::time::timeout(options.timeouts.io(), send.stopped())
+                        .await
+                        .context("receipt acknowledgement timed out")??;
+                    if stopped.is_some() {
+                        bail!("sender rejected the receipt");
+                    }
+                    Ok::<_, anyhow::Error>(())
+                }
+                .await;
+                if let Err(err) = ack {
+                    events(Event::Warning {
+                        message: format!(
+                            "directory saved at {}, but sender confirmation is uncertain: {err:#}",
+                            path.display()
+                        ),
+                    });
+                }
+                return Ok(TransferReceipt {
+                    name,
+                    size: received,
+                    hash: root_hash,
+                    saved_to: Some(path),
+                    is_directory: true,
+                });
+            }
+        }
+    }
 }
 
 async fn write_frame<T: Serialize>(

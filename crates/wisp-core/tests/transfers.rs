@@ -210,3 +210,115 @@ async fn discovery_timeout_and_cancellation_are_bounded() {
         .unwrap_err()
         .is_cancelled());
 }
+
+#[tokio::test]
+async fn complete_directory_transfer_with_nested_structure() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let project = source.path().join("my_project");
+    std::fs::create_dir_all(project.join("src/utils")).unwrap();
+    std::fs::create_dir_all(project.join("empty_dir")).unwrap();
+
+    std::fs::write(project.join("README.md"), b"# Hello Directory").unwrap();
+    std::fs::write(project.join("src/main.rs"), b"fn main() {}").unwrap();
+    std::fs::write(project.join("src/utils/helpers.rs"), b"pub fn helper() {}").unwrap();
+
+    let (sender, code, address) = start(&project, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert!(sent.is_directory);
+    assert!(receipt.is_directory);
+    assert_eq!(sent.name, "my_project");
+    assert_eq!(receipt.name, "my_project");
+    assert_eq!(sent.hash, receipt.hash);
+    let expected_size =
+        (b"# Hello Directory".len() + b"fn main() {}".len() + b"pub fn helper() {}".len()) as u64;
+    assert_eq!(sent.size, expected_size);
+    assert_eq!(receipt.size, expected_size);
+
+    let dest_project = destination.path().join("my_project");
+    assert!(dest_project.is_dir());
+    assert_eq!(
+        std::fs::read(dest_project.join("README.md")).unwrap(),
+        b"# Hello Directory"
+    );
+    assert_eq!(
+        std::fs::read(dest_project.join("src/main.rs")).unwrap(),
+        b"fn main() {}"
+    );
+    assert_eq!(
+        std::fs::read(dest_project.join("src/utils/helpers.rs")).unwrap(),
+        b"pub fn helper() {}"
+    );
+    assert!(dest_project.join("empty_dir").is_dir());
+    assert_eq!(
+        std::fs::read_dir(dest_project.join("empty_dir")).unwrap().count(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn empty_directory_transfer() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let empty_dir = source.path().join("empty_dir");
+    std::fs::create_dir(&empty_dir).unwrap();
+
+    let (sender, code, address) = start(&empty_dir, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert!(sent.is_directory);
+    assert!(receipt.is_directory);
+    assert_eq!(sent.name, "empty_dir");
+    assert_eq!(receipt.name, "empty_dir");
+    assert_eq!(sent.size, 0);
+    assert_eq!(receipt.size, 0);
+    assert_eq!(sent.hash, receipt.hash);
+
+    let dest_dir = destination.path().join("empty_dir");
+    assert!(dest_dir.is_dir());
+    assert_eq!(std::fs::read_dir(dest_dir).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn directory_collision_preserves_existing_directory() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+
+    let existing_dir = destination.path().join("backup");
+    std::fs::create_dir(&existing_dir).unwrap();
+    std::fs::write(existing_dir.join("old.txt"), b"old file").unwrap();
+
+    let source_dir = source.path().join("backup");
+    std::fs::create_dir(&source_dir).unwrap();
+    std::fs::write(source_dir.join("new.txt"), b"new file").unwrap();
+
+    let (sender, code, address) = start(&source_dir, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert_eq!(sent.name, "backup (1)");
+    assert_eq!(receipt.name, "backup (1)");
+
+    assert_eq!(
+        std::fs::read(existing_dir.join("old.txt")).unwrap(),
+        b"old file"
+    );
+    assert!(!existing_dir.join("new.txt").exists());
+
+    let collided_dir = destination.path().join("backup (1)");
+    assert!(collided_dir.is_dir());
+    assert_eq!(
+        std::fs::read(collided_dir.join("new.txt")).unwrap(),
+        b"new file"
+    );
+}
+

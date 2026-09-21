@@ -199,7 +199,7 @@ async fn absent_or_forged_receipt_never_confirms_delivery() {
         let source = tempfile::tempdir().unwrap();
         let path = source.path().join("data");
         std::fs::write(&path, b"abc").unwrap();
-        let mut prepared = PreparedFile::open(&SendOptions::new(path), &silent())
+        let prepared = PreparedFile::open(&SendOptions::new(path), &silent())
             .await
             .unwrap();
         let code = PairingCode::generate();
@@ -207,9 +207,10 @@ async fn absent_or_forged_receipt_never_confirms_delivery() {
         let (sc, cc) = connections().await;
         let sender = tokio::spawn(async move {
             let (mut s, mut r) = sc.accept_bi().await.unwrap();
+            let mut source = PreparedSource::File(prepared);
             sender_protocol(
                 &code,
-                &mut prepared,
+                &mut source,
                 &mut s,
                 &mut r,
                 &channel_binding(&sc).unwrap(),
@@ -236,6 +237,7 @@ async fn absent_or_forged_receipt_never_confirms_delivery() {
                     name: "data".into(),
                     size: 3,
                     hash: "0".repeat(64),
+                    is_directory: false,
                 },
                 Duration::from_secs(1),
             )
@@ -264,6 +266,8 @@ async fn cancelled_receiver_removes_its_partial_file() {
                 name: "data".into(),
                 size: 100,
                 hash: "0".repeat(64),
+                is_directory: false,
+                entries_count: 1,
             },
             Duration::from_secs(1),
         )
@@ -322,6 +326,8 @@ async fn lost_receipt_preserves_verified_local_file_and_emits_warning() {
                 name: "data".into(),
                 size: 3,
                 hash: blake3::hash(b"abc").to_hex().to_string(),
+                is_directory: false,
+                entries_count: 1,
             },
             Duration::from_secs(1),
         )
@@ -390,15 +396,16 @@ async fn receipt_validation_rejects_bidi_controls_and_marks() {
         let source_dir = tempfile::tempdir().unwrap();
         let file_path = source_dir.path().join("source.bin");
         std::fs::write(&file_path, payload).unwrap();
-        let mut source = PreparedFile::open(&SendOptions::new(file_path), &silent())
+        let source = PreparedFile::open(&SendOptions::new(file_path), &silent())
             .await
             .unwrap();
         let sender_code = code.clone();
         let sender = tokio::spawn(async move {
             let (mut s, mut r) = sc.accept_bi().await.unwrap();
+            let mut src = PreparedSource::File(source);
             sender_protocol(
                 &sender_code,
-                &mut source,
+                &mut src,
                 &mut s,
                 &mut r,
                 &channel_binding(&sc).unwrap(),
@@ -426,6 +433,7 @@ async fn receipt_validation_rejects_bidi_controls_and_marks() {
                 name: bidi.into(),
                 size: payload.len() as u64,
                 hash: hash.clone(),
+                is_directory: false,
             },
             Duration::from_secs(1),
         )
@@ -512,6 +520,8 @@ async fn slowloris_trickling_sender_is_aborted() {
                 name: "data".into(),
                 size: total_size,
                 hash: "0".repeat(64),
+                is_directory: false,
+                entries_count: 1,
             },
             Duration::from_secs(1),
         )
@@ -549,3 +559,156 @@ async fn slowloris_trickling_sender_is_aborted() {
     server.abort();
     let _ = server.await;
 }
+
+#[tokio::test]
+async fn directory_traversal_path_rejected_and_temp_cleaned_up() {
+    let (sc, cc) = connections().await;
+    let code = PairingCode::generate();
+    let destination = tempfile::tempdir().unwrap();
+    let options = ReceiveOptions::new(code.clone(), destination.path().into());
+
+    let server = tokio::spawn(async move {
+        let (mut s, mut _r) = raw_sender(&sc, &code).await;
+        write_frame(
+            &mut s,
+            &FileMeta {
+                name: "malicious_dir".into(),
+                size: 10,
+                hash: "0".repeat(64),
+                is_directory: true,
+                entries_count: 1,
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        write_frame(
+            &mut s,
+            &DirFrame::FileHeader {
+                path: "../evil.txt".into(),
+                size: 4,
+                executable: false,
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        let _ = s.stopped().await;
+    });
+
+    let (mut s, mut r) = cc.open_bi().await.unwrap();
+    let result = receiver_protocol(
+        &options,
+        &mut s,
+        &mut r,
+        &channel_binding(&cc).unwrap(),
+        &silent(),
+    )
+    .await;
+
+    assert!(result.is_err());
+    let err = format!("{:#}", result.unwrap_err());
+    assert!(
+        err.contains("relative path component cannot be empty, '.' or '..'"),
+        "expected traversal error, got: {err}"
+    );
+
+    // Staging and destination directory must be clean
+    assert_eq!(
+        std::fs::read_dir(destination.path()).unwrap().count(),
+        0,
+        "staging directory was not cleaned up upon traversal error"
+    );
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn directory_tree_hash_mismatch_rejected_and_cleaned_up() {
+    let (sc, cc) = connections().await;
+    let code = PairingCode::generate();
+    let destination = tempfile::tempdir().unwrap();
+    let options = ReceiveOptions::new(code.clone(), destination.path().into());
+
+    let server = tokio::spawn(async move {
+        let (mut s, mut _r) = raw_sender(&sc, &code).await;
+        write_frame(
+            &mut s,
+            &FileMeta {
+                name: "dir_tampered".into(),
+                size: 4,
+                hash: "0".repeat(64),
+                is_directory: true,
+                entries_count: 1,
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        write_frame(
+            &mut s,
+            &DirFrame::FileHeader {
+                path: "test.txt".into(),
+                size: 4,
+                executable: false,
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        s.write_all(b"test").await.unwrap();
+
+        let file_hash = blake3::hash(b"test").to_hex().to_string();
+        write_frame(
+            &mut s,
+            &DirFrame::FileEnd { hash: file_hash },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        // Send a corrupt root hash
+        write_frame(
+            &mut s,
+            &DirFrame::EndDir {
+                root_hash: "f".repeat(64),
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        s.finish().unwrap();
+        let _ = s.stopped().await;
+    });
+
+    let (mut s, mut r) = cc.open_bi().await.unwrap();
+    let result = receiver_protocol(
+        &options,
+        &mut s,
+        &mut r,
+        &channel_binding(&cc).unwrap(),
+        &silent(),
+    )
+    .await;
+
+    assert!(result.is_err());
+    let err = format!("{:#}", result.unwrap_err());
+    assert!(
+        err.contains("directory integrity verification failed"),
+        "expected integrity failure, got: {err}"
+    );
+
+    assert_eq!(
+        std::fs::read_dir(destination.path()).unwrap().count(),
+        0,
+        "corrupted directory was published or not cleaned up"
+    );
+    server.abort();
+    let _ = server.await;
+}
+

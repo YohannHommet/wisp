@@ -314,3 +314,61 @@ fn failed_stdout_stops_sender_and_reports_actionable_error() {
         assert!(!stderr.contains("panicked"), "json={json}: {stderr}");
     }
 }
+
+#[test]
+fn directory_transfer_cli() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let project = source.path().join("my_cli_project");
+    std::fs::create_dir_all(project.join("nested/folder")).unwrap();
+    std::fs::write(project.join("file1.txt"), b"cli dir file 1").unwrap();
+    std::fs::write(project.join("nested/folder/file2.txt"), b"cli nested file 2").unwrap();
+
+    let mut sender = Process::start(&[
+        "send",
+        path(&project),
+        "--no-discovery",
+        "--bind",
+        "127.0.0.1",
+        "--wait",
+        "10",
+    ]);
+    let ready = sender.event("ready");
+    assert_eq!(ready["is_directory"], true);
+
+    let mut receiver = Process::start(&[
+        "recv",
+        ready["code"].as_str().unwrap(),
+        "--dir",
+        path(destination.path()),
+        "--address",
+        ready["address"].as_str().unwrap(),
+        "--timeout",
+        "5",
+    ]);
+
+    let (status, received) = receiver.finish();
+    assert!(status.success(), "{received:?}");
+    let (status, sent) = sender.finish();
+    assert!(status.success(), "{sent:?}");
+
+    let received_complete = received.iter().find(|v| v["event"] == "completed").unwrap();
+    let sent_complete = sent.iter().find(|v| v["event"] == "completed").unwrap();
+    assert_eq!(
+        received_complete["receipt"]["hash"],
+        sent_complete["receipt"]["hash"]
+    );
+    assert_eq!(received_complete["receipt"]["is_directory"], true);
+    assert_eq!(sent_complete["receipt"]["is_directory"], true);
+
+    let dest_project = destination.path().join("my_cli_project");
+    assert_eq!(
+        std::fs::read(dest_project.join("file1.txt")).unwrap(),
+        b"cli dir file 1"
+    );
+    assert_eq!(
+        std::fs::read(dest_project.join("nested/folder/file2.txt")).unwrap(),
+        b"cli nested file 2"
+    );
+}
+

@@ -372,3 +372,54 @@ fn directory_transfer_cli() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn ctrl_c_during_active_directory_transfer_cleans_up_staging_dir() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let dir = source.path().join("big_dir");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("sub/big.bin"), vec![0u8; 16 * 1024 * 1024]).unwrap();
+
+    let sender = Process::start(&[
+        "send",
+        path(&dir),
+        "--no-discovery",
+        "--bind",
+        "127.0.0.1",
+        "--wait",
+        "10",
+    ]);
+    let ready = sender.event("ready");
+
+    let mut receiver = Process::start(&[
+        "recv",
+        ready["code"].as_str().unwrap(),
+        "--dir",
+        path(destination.path()),
+        "--address",
+        ready["address"].as_str().unwrap(),
+        "--timeout",
+        "5",
+    ]);
+
+    receiver.event("progress");
+
+    assert!(Command::new("kill")
+        .args(["-INT", &receiver.child.id().to_string()])
+        .status()
+        .unwrap()
+        .success());
+
+    let (status, events) = receiver.finish();
+    assert_eq!(status.code(), Some(130));
+    assert_eq!(events.last().unwrap()["exit_code"], 130);
+
+    assert_eq!(
+        std::fs::read_dir(destination.path()).unwrap().count(),
+        0,
+        "staging directory was not unlinked on SIGINT"
+    );
+}
+
+

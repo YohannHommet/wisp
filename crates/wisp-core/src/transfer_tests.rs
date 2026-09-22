@@ -1033,5 +1033,162 @@ async fn directory_out_of_order_frame_rejected_and_cleaned_up() {
     let _ = server.await;
 }
 
+#[tokio::test]
+async fn directory_slowloris_trickling_sender_is_aborted() {
+    let (sc, cc) = connections().await;
+    let code = PairingCode::generate();
+    let destination = tempfile::tempdir().unwrap();
+    let mut options = ReceiveOptions::new(code.clone(), destination.path().into());
+    options.timeouts = Timeouts {
+        pake: 2,
+        block_transfer: 1, // 1-second window
+        discovery: 1,
+        wait: 2,
+    };
+    let total_size = MIN_THROUGHPUT_PER_WINDOW * 2;
+
+    let server = tokio::spawn(async move {
+        let (mut s, mut _r) = raw_sender(&sc, &code).await;
+        write_frame(
+            &mut s,
+            &FileMeta {
+                name: "slow_dir".into(),
+                size: total_size,
+                hash: "0".repeat(64),
+                is_directory: true,
+                entries_count: Some(1),
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        write_frame(
+            &mut s,
+            &DirFrame::FileHeader {
+                path: "slow_file.bin".into(),
+                size: total_size,
+                executable: false,
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        // Send 1 byte at t=0
+        s.write_all(b"a").await.unwrap();
+
+        // Send 1 byte at t=600ms (< 1s per-read timeout)
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        if s.write_all(b"b").await.is_err() {
+            return;
+        }
+
+        // Send 1 byte at t=1200ms (> 1s window)
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let _ = s.write_all(b"c").await;
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    });
+
+    let (mut s, mut r) = cc.open_bi().await.unwrap();
+    let result = receiver_protocol(
+        &options,
+        &mut s,
+        &mut r,
+        &channel_binding(&cc).unwrap(),
+        &silent(),
+    )
+    .await;
+
+    assert!(result.is_err());
+    let err = format!("{:#}", result.unwrap_err());
+    assert!(
+        err.contains("transfer rate too slow"),
+        "expected Slowloris abort error, got: {err}"
+    );
+
+    assert_eq!(
+        std::fs::read_dir(destination.path()).unwrap().count(),
+        0,
+        "staging directory was not cleaned up on slowloris abort"
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn cancelled_directory_receiver_removes_its_staging_dir() {
+    let destination = tempfile::tempdir().unwrap();
+    let (sc, cc) = connections().await;
+    let code = PairingCode::generate();
+    let opts = ReceiveOptions {
+        timeouts: limits(),
+        ..ReceiveOptions::new(code.clone(), destination.path().into())
+    };
+    let server = tokio::spawn(async move {
+        let (mut s, _r) = raw_sender(&sc, &code).await;
+        write_frame(
+            &mut s,
+            &FileMeta {
+                name: "dir_cancel".into(),
+                size: 1000,
+                hash: "0".repeat(64),
+                is_directory: true,
+                entries_count: Some(1),
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        write_frame(
+            &mut s,
+            &DirFrame::FileHeader {
+                path: "data.bin".into(),
+                size: 1000,
+                executable: false,
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        s.write_all(b"incomplete partial file data").await.unwrap();
+        std::future::pending::<()>().await;
+    });
+    let (tx, rx) = oneshot::channel();
+    let tx = std::sync::Mutex::new(Some(tx));
+    let event: EventHandler = Arc::new(move |event| {
+        if matches!(event, Event::Progress { .. }) {
+            if let Some(tx) = tx.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
+        }
+    });
+    let client = tokio::spawn(async move {
+        let (mut s, mut r) = cc.open_bi().await.unwrap();
+        receiver_protocol(
+            &opts,
+            &mut s,
+            &mut r,
+            &channel_binding(&cc).unwrap(),
+            &event,
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(std::fs::read_dir(destination.path()).unwrap().count(), 1);
+    client.abort();
+    assert!(client.await.unwrap_err().is_cancelled());
+    assert_eq!(std::fs::read_dir(destination.path()).unwrap().count(), 0);
+    server.abort();
+    let _ = server.await;
+}
+
+
+
 
 

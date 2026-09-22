@@ -470,4 +470,69 @@ async fn directory_executable_permissions_preserved() {
     );
 }
 
+#[tokio::test]
+async fn directory_multiple_collisions_resolves_to_next_index() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let dir = source.path().join("dataset");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("sample.txt"), b"fresh content").unwrap();
+
+    // Pre-create dataset, dataset (1), dataset (2) in destination
+    std::fs::create_dir(destination.path().join("dataset")).unwrap();
+    std::fs::create_dir(destination.path().join("dataset (1)")).unwrap();
+    std::fs::create_dir(destination.path().join("dataset (2)")).unwrap();
+
+    let (sender, code, address) = start(&dir, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert_eq!(sent.hash, receipt.hash);
+    let expected_dest = destination.path().join("dataset (3)");
+    assert!(expected_dest.exists(), "directory should resolve to dataset (3)");
+    assert_eq!(
+        std::fs::read(expected_dest.join("sample.txt")).unwrap(),
+        b"fresh content"
+    );
+}
+
+#[tokio::test]
+async fn directory_with_empty_files_and_nested_structure() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let dir = source.path().join("structure");
+    std::fs::create_dir_all(dir.join("empty_subdir")).unwrap();
+    std::fs::create_dir_all(dir.join("mixed_subdir")).unwrap();
+
+    // 0-byte file at root
+    std::fs::write(dir.join("empty_root.txt"), b"").unwrap();
+    // 0-byte file in nested folder
+    std::fs::write(dir.join("mixed_subdir/empty_nested.txt"), b"").unwrap();
+    // Non-empty file
+    std::fs::write(dir.join("mixed_subdir/payload.txt"), b"not empty").unwrap();
+
+    let (sender, code, address) = start(&dir, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert_eq!(sent.hash, receipt.hash);
+    let dest_dir = destination.path().join("structure");
+    assert!(dest_dir.join("empty_subdir").is_dir());
+    assert!(dest_dir.join("empty_root.txt").is_file());
+    assert_eq!(std::fs::metadata(dest_dir.join("empty_root.txt")).unwrap().len(), 0);
+    assert_eq!(
+        std::fs::read(dest_dir.join("mixed_subdir/payload.txt")).unwrap(),
+        b"not empty"
+    );
+    assert_eq!(
+        std::fs::metadata(dest_dir.join("mixed_subdir/empty_nested.txt")).unwrap().len(),
+        0
+    );
+}
+
+
 

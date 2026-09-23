@@ -41,10 +41,11 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
-    /// Send one file and print a single-use code for the receiver.
+    /// Send a file or directory and print a single-use code for the receiver.
     Send {
-        file: PathBuf,
-        /// Filename to save on the receiver.
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        /// Name to save on the receiver.
         #[arg(short, long)]
         name: Option<String>,
         /// Local IPv4 interface to use (useful with a VPN or multiple networks).
@@ -191,11 +192,13 @@ impl Output {
                 discovery,
                 expires_in,
                 size,
+                is_directory,
             } => {
                 self.stdout(|out| {
+                    let kind = if is_directory { "directory" } else { "file" };
                     writeln!(
                         out,
-                        "\nReady to send {size} bytes. Code expires in {expires_in}s.\n"
+                        "\nReady to send {kind} ({size} bytes). Code expires in {expires_in}s.\n"
                     )?;
                     if discovery {
                         writeln!(out, "  wisp recv {code}")?;
@@ -236,17 +239,18 @@ impl Output {
             self.line(serde_json::json!({"event":"completed", "receipt":receipt}));
         } else {
             self.stdout(|out| {
+                let kind = if receipt.is_directory { "directory" } else { "file" };
                 if let Some(path) = receipt.saved_to {
                     writeln!(
                         out,
-                        "Saved and verified: {} ({} bytes)",
+                        "Saved and verified {kind}: {} ({} bytes)",
                         terminal_text(&path.display().to_string()),
                         receipt.size
                     )
                 } else {
                     writeln!(
                         out,
-                        "Delivered and verified: {} ({} bytes)",
+                        "Delivered and verified {kind}: {} ({} bytes)",
                         terminal_text(&receipt.name),
                         receipt.size
                     )
@@ -292,14 +296,14 @@ async fn run(cli: Cli, events: EventHandler) -> Result<TransferReceipt> {
     }
     match cli.command {
         Command::Send {
-            file,
+            path,
             name,
             bind,
             port,
             no_discovery,
             wait,
         } => {
-            let mut options = SendOptions::new(file);
+            let mut options = SendOptions::new(path);
             options.display_name = name;
             options.bind = bind;
             options.port = port;

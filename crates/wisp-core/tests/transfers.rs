@@ -210,3 +210,329 @@ async fn discovery_timeout_and_cancellation_are_bounded() {
         .unwrap_err()
         .is_cancelled());
 }
+
+#[tokio::test]
+async fn complete_directory_transfer_with_nested_structure() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let project = source.path().join("my_project");
+    std::fs::create_dir_all(project.join("src/utils")).unwrap();
+    std::fs::create_dir_all(project.join("empty_dir")).unwrap();
+
+    std::fs::write(project.join("README.md"), b"# Hello Directory").unwrap();
+    std::fs::write(project.join("src/main.rs"), b"fn main() {}").unwrap();
+    std::fs::write(project.join("src/utils/helpers.rs"), b"pub fn helper() {}").unwrap();
+
+    let (sender, code, address) = start(&project, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert!(sent.is_directory);
+    assert!(receipt.is_directory);
+    assert_eq!(sent.name, "my_project");
+    assert_eq!(receipt.name, "my_project");
+    assert_eq!(sent.hash, receipt.hash);
+    let expected_size =
+        (b"# Hello Directory".len() + b"fn main() {}".len() + b"pub fn helper() {}".len()) as u64;
+    assert_eq!(sent.size, expected_size);
+    assert_eq!(receipt.size, expected_size);
+
+    let dest_project = destination.path().join("my_project");
+    assert!(dest_project.is_dir());
+    assert_eq!(
+        std::fs::read(dest_project.join("README.md")).unwrap(),
+        b"# Hello Directory"
+    );
+    assert_eq!(
+        std::fs::read(dest_project.join("src/main.rs")).unwrap(),
+        b"fn main() {}"
+    );
+    assert_eq!(
+        std::fs::read(dest_project.join("src/utils/helpers.rs")).unwrap(),
+        b"pub fn helper() {}"
+    );
+    assert!(dest_project.join("empty_dir").is_dir());
+    assert_eq!(
+        std::fs::read_dir(dest_project.join("empty_dir")).unwrap().count(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn empty_directory_transfer() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let empty_dir = source.path().join("empty_dir");
+    std::fs::create_dir(&empty_dir).unwrap();
+
+    let (sender, code, address) = start(&empty_dir, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert!(sent.is_directory);
+    assert!(receipt.is_directory);
+    assert_eq!(sent.name, "empty_dir");
+    assert_eq!(receipt.name, "empty_dir");
+    assert_eq!(sent.size, 0);
+    assert_eq!(receipt.size, 0);
+    assert_eq!(sent.hash, receipt.hash);
+
+    let dest_dir = destination.path().join("empty_dir");
+    assert!(dest_dir.is_dir());
+    assert_eq!(std::fs::read_dir(dest_dir).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn directory_collision_preserves_existing_directory() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+
+    let existing_dir = destination.path().join("backup");
+    std::fs::create_dir(&existing_dir).unwrap();
+    std::fs::write(existing_dir.join("old.txt"), b"old file").unwrap();
+
+    let source_dir = source.path().join("backup");
+    std::fs::create_dir(&source_dir).unwrap();
+    std::fs::write(source_dir.join("new.txt"), b"new file").unwrap();
+
+    let (sender, code, address) = start(&source_dir, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert_eq!(sent.name, "backup (1)");
+    assert_eq!(receipt.name, "backup (1)");
+
+    assert_eq!(
+        std::fs::read(existing_dir.join("old.txt")).unwrap(),
+        b"old file"
+    );
+    assert!(!existing_dir.join("new.txt").exists());
+
+    let collided_dir = destination.path().join("backup (1)");
+    assert!(collided_dir.is_dir());
+    assert_eq!(
+        std::fs::read(collided_dir.join("new.txt")).unwrap(),
+        b"new file"
+    );
+}
+
+#[tokio::test]
+async fn directory_source_mutation_aborts_and_cleans_up() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let dir_path = source.path().join("mutable_dir");
+    std::fs::create_dir(&dir_path).unwrap();
+    let file_path = dir_path.join("data.bin");
+    std::fs::write(&file_path, b"initial payload").unwrap();
+
+    let mutate = file_path.clone();
+    let handler: EventHandler = Arc::new(move |event| {
+        if matches!(event, Event::Ready { .. }) {
+            // Mutate file length after scan has occurred
+            std::fs::write(&mutate, b"initial payload with unexpected trailing data").unwrap();
+        }
+    });
+
+    let (sender, code, address) = start(&dir_path, handler).await;
+    let recv_res = receive_file(receiver(code, address, destination.path()), quiet()).await;
+    assert!(recv_res.is_err());
+    assert!(sender.await.unwrap().is_err());
+    assert_eq!(std::fs::read_dir(destination.path()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn directory_with_symlinks_skips_and_delivers_cleanly() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let dir_path = source.path().join("symlink_dir");
+    std::fs::create_dir(&dir_path).unwrap();
+
+    let real_file = dir_path.join("real.txt");
+    std::fs::write(&real_file, b"genuine content").unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let _ = symlink(&real_file, dir_path.join("internal_link"));
+        let _ = symlink("/etc/passwd", dir_path.join("evil_external_link"));
+        let _ = symlink(dir_path.join("non_existent"), dir_path.join("broken_link"));
+    }
+
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let warnings_clone = Arc::clone(&warnings);
+    let handler: EventHandler = Arc::new(move |event| {
+        if let Event::Warning { message } = event {
+            warnings_clone.lock().unwrap().push(message);
+        }
+    });
+
+    let (sender, code, address) = start(&dir_path, handler).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert_eq!(sent.hash, receipt.hash);
+    let dest_dir = destination.path().join("symlink_dir");
+    assert!(dest_dir.is_dir());
+    assert_eq!(
+        std::fs::read(dest_dir.join("real.txt")).unwrap(),
+        b"genuine content"
+    );
+
+    #[cfg(unix)]
+    {
+        assert!(!dest_dir.join("internal_link").exists());
+        assert!(!dest_dir.join("evil_external_link").exists());
+        assert!(!dest_dir.join("broken_link").exists());
+        let logged_warnings = warnings.lock().unwrap();
+        assert!(logged_warnings.iter().any(|w| w.contains("skipping symlink")));
+    }
+}
+
+#[tokio::test]
+async fn directory_deep_nesting_and_unicode_names() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let root = source.path().join("racine élève");
+
+    let mut current = root.clone();
+    for i in 1..=12 {
+        current = current.join(format!("niveau {i} dossier"));
+    }
+    std::fs::create_dir_all(&current).unwrap();
+
+    let target_file = current.join("résumé d'été 2026.txt");
+    std::fs::write(&target_file, "données chiffrées & validées".as_bytes()).unwrap();
+
+    let (sender, code, address) = start(&root, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert_eq!(sent.hash, receipt.hash);
+    let mut dest_current = destination.path().join("racine élève");
+    for i in 1..=12 {
+        dest_current = dest_current.join(format!("niveau {i} dossier"));
+    }
+    assert_eq!(
+        std::fs::read(dest_current.join("résumé d'été 2026.txt")).unwrap(),
+        "données chiffrées & validées".as_bytes()
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn directory_executable_permissions_preserved() {
+    use std::os::unix::fs::PermissionsExt;
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let dir = source.path().join("bin_dir");
+    std::fs::create_dir(&dir).unwrap();
+
+    let script = dir.join("run.sh");
+    std::fs::write(&script, b"#!/bin/sh\necho hello").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let regular = dir.join("readme.txt");
+    std::fs::write(&regular, b"just text").unwrap();
+    std::fs::set_permissions(&regular, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let (sender, code, address) = start(&dir, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert_eq!(sent.hash, receipt.hash);
+    let dest_dir = destination.path().join("bin_dir");
+    let dest_script_mode = std::fs::metadata(dest_dir.join("run.sh"))
+        .unwrap()
+        .permissions()
+        .mode();
+    let dest_regular_mode = std::fs::metadata(dest_dir.join("readme.txt"))
+        .unwrap()
+        .permissions()
+        .mode();
+
+    assert_ne!(dest_script_mode & 0o111, 0, "run.sh should be executable");
+    assert_eq!(
+        dest_regular_mode & 0o111,
+        0,
+        "readme.txt should not be executable"
+    );
+}
+
+#[tokio::test]
+async fn directory_multiple_collisions_resolves_to_next_index() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let dir = source.path().join("dataset");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("sample.txt"), b"fresh content").unwrap();
+
+    // Pre-create dataset, dataset (1), dataset (2) in destination
+    std::fs::create_dir(destination.path().join("dataset")).unwrap();
+    std::fs::create_dir(destination.path().join("dataset (1)")).unwrap();
+    std::fs::create_dir(destination.path().join("dataset (2)")).unwrap();
+
+    let (sender, code, address) = start(&dir, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert_eq!(sent.hash, receipt.hash);
+    let expected_dest = destination.path().join("dataset (3)");
+    assert!(expected_dest.exists(), "directory should resolve to dataset (3)");
+    assert_eq!(
+        std::fs::read(expected_dest.join("sample.txt")).unwrap(),
+        b"fresh content"
+    );
+}
+
+#[tokio::test]
+async fn directory_with_empty_files_and_nested_structure() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let dir = source.path().join("structure");
+    std::fs::create_dir_all(dir.join("empty_subdir")).unwrap();
+    std::fs::create_dir_all(dir.join("mixed_subdir")).unwrap();
+
+    // 0-byte file at root
+    std::fs::write(dir.join("empty_root.txt"), b"").unwrap();
+    // 0-byte file in nested folder
+    std::fs::write(dir.join("mixed_subdir/empty_nested.txt"), b"").unwrap();
+    // Non-empty file
+    std::fs::write(dir.join("mixed_subdir/payload.txt"), b"not empty").unwrap();
+
+    let (sender, code, address) = start(&dir, quiet()).await;
+    let receipt = receive_file(receiver(code, address, destination.path()), quiet())
+        .await
+        .unwrap();
+    let sent = sender.await.unwrap().unwrap();
+
+    assert_eq!(sent.hash, receipt.hash);
+    let dest_dir = destination.path().join("structure");
+    assert!(dest_dir.join("empty_subdir").is_dir());
+    assert!(dest_dir.join("empty_root.txt").is_file());
+    assert_eq!(std::fs::metadata(dest_dir.join("empty_root.txt")).unwrap().len(), 0);
+    assert_eq!(
+        std::fs::read(dest_dir.join("mixed_subdir/payload.txt")).unwrap(),
+        b"not empty"
+    );
+    assert_eq!(
+        std::fs::metadata(dest_dir.join("mixed_subdir/empty_nested.txt")).unwrap().len(),
+        0
+    );
+}
+
+
+

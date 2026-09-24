@@ -322,7 +322,11 @@ fn directory_transfer_cli() {
     let project = source.path().join("my_cli_project");
     std::fs::create_dir_all(project.join("nested/folder")).unwrap();
     std::fs::write(project.join("file1.txt"), b"cli dir file 1").unwrap();
-    std::fs::write(project.join("nested/folder/file2.txt"), b"cli nested file 2").unwrap();
+    std::fs::write(
+        project.join("nested/folder/file2.txt"),
+        b"cli nested file 2",
+    )
+    .unwrap();
 
     let mut sender = Process::start(&[
         "send",
@@ -379,7 +383,8 @@ fn ctrl_c_during_active_directory_transfer_cleans_up_staging_dir() {
     let destination = tempfile::tempdir().unwrap();
     let dir = source.path().join("big_dir");
     std::fs::create_dir_all(dir.join("sub")).unwrap();
-    std::fs::write(dir.join("sub/big.bin"), vec![0u8; 16 * 1024 * 1024]).unwrap();
+    let total_size = 256 * 1024 * 1024;
+    std::fs::write(dir.join("sub/big.bin"), vec![0u8; total_size]).unwrap();
 
     let sender = Process::start(&[
         "send",
@@ -490,7 +495,10 @@ fn cli_transfer_resumption_after_sigint() {
 
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let ev = receiver1.events.recv_timeout(Duration::from_secs(2)).unwrap();
+        let ev = receiver1
+            .events
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
         if ev["event"] == "progress" {
             let transferred = ev["transferred"].as_u64().unwrap_or(0);
             if transferred >= 16 * 1024 * 1024 && transferred < payload.len() as u64 {
@@ -557,6 +565,3 @@ fn cli_transfer_resumption_after_sigint() {
     let saved = destination.path().join("resumable_cli.bin");
     assert_eq!(std::fs::read(&saved).unwrap(), payload);
 }
-
-
-

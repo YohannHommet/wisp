@@ -1889,6 +1889,7 @@ dependencies = [
  "blake3",
  "dirs",
  "hex",
+ "libc",
  "local-ip-address",
  "mdns-sd",
  "quinn",

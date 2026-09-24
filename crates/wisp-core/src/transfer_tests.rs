@@ -230,7 +230,9 @@ async fn absent_or_forged_receipt_never_confirms_delivery() {
         .unwrap();
         s.write_all(b"GET").await.unwrap();
         let _meta: FileMeta = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
-        write_frame(&mut s, &TransferRequest::Full, Duration::from_secs(1)).await.unwrap();
+        write_frame(&mut s, &TransferRequest::Full, Duration::from_secs(1))
+            .await
+            .unwrap();
         let _resp: TransferResponse = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
         let _ = r.read_to_end(MAX_FRAME + 100).await.unwrap();
         if forge {
@@ -444,7 +446,9 @@ async fn receipt_validation_rejects_bidi_controls_and_marks() {
         .unwrap();
         s.write_all(b"GET").await.unwrap();
         let _meta: FileMeta = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
-        write_frame(&mut s, &TransferRequest::Full, Duration::from_secs(1)).await.unwrap();
+        write_frame(&mut s, &TransferRequest::Full, Duration::from_secs(1))
+            .await
+            .unwrap();
         let _resp: TransferResponse = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
         let mut buf = vec![0u8; payload.len()];
         r.read_exact(&mut buf).await.unwrap();
@@ -928,9 +932,7 @@ async fn directory_non_monotonic_path_rejected_and_cleaned_up() {
         // 1st entry: 'b'
         write_frame(
             &mut s,
-            &DirFrame::Dir {
-                path: "b".into(),
-            },
+            &DirFrame::Dir { path: "b".into() },
             Duration::from_secs(1),
         )
         .await
@@ -939,9 +941,7 @@ async fn directory_non_monotonic_path_rejected_and_cleaned_up() {
         // 2nd entry: 'a' (non-monotonic: 'a' < 'b')
         write_frame(
             &mut s,
-            &DirFrame::Dir {
-                path: "a".into(),
-            },
+            &DirFrame::Dir { path: "a".into() },
             Duration::from_secs(1),
         )
         .await
@@ -986,8 +986,14 @@ fn single_file_metadata_and_receipt_wire_compatibility_with_v0_2() {
         entries_count: None,
     };
     let json = serde_json::to_string(&file_meta).unwrap();
-    assert!(!json.contains("is_directory"), "v0.2 single-file wire json must not contain is_directory");
-    assert!(!json.contains("entries_count"), "v0.2 single-file wire json must not contain entries_count");
+    assert!(
+        !json.contains("is_directory"),
+        "v0.2 single-file wire json must not contain is_directory"
+    );
+    assert!(
+        !json.contains("entries_count"),
+        "v0.2 single-file wire json must not contain entries_count"
+    );
 
     let receipt = VerifiedReceipt {
         name: "test.txt".into(),
@@ -996,7 +1002,10 @@ fn single_file_metadata_and_receipt_wire_compatibility_with_v0_2() {
         is_directory: false,
     };
     let receipt_json = serde_json::to_string(&receipt).unwrap();
-    assert!(!receipt_json.contains("is_directory"), "v0.2 single-file receipt must not contain is_directory");
+    assert!(
+        !receipt_json.contains("is_directory"),
+        "v0.2 single-file receipt must not contain is_directory"
+    );
 }
 
 #[tokio::test]
@@ -1216,8 +1225,3 @@ async fn cancelled_directory_receiver_removes_its_staging_dir() {
     server.abort();
     let _ = server.await;
 }
-
-
-
-
-

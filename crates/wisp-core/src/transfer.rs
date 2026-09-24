@@ -278,9 +278,10 @@ struct PreparedDirectory {
 
 impl PreparedDirectory {
     async fn open(options: &SendOptions, events: &EventHandler) -> Result<Self> {
-        let root = options.path.canonicalize().with_context(|| {
-            format!("resolving directory path {}", options.path.display())
-        })?;
+        let root = options
+            .path
+            .canonicalize()
+            .with_context(|| format!("resolving directory path {}", options.path.display()))?;
         let name = sanitize(options.display_name.as_deref().unwrap_or_else(|| {
             options
                 .path
@@ -292,11 +293,10 @@ impl PreparedDirectory {
 
         let root_for_scan = root.clone();
         let events_for_scan = Arc::clone(events);
-        let (entries, total_size) = tokio::task::spawn_blocking(move || {
-            scan_directory(&root_for_scan, &events_for_scan)
-        })
-        .await
-        .context("directory scan panicked")??;
+        let (entries, total_size) =
+            tokio::task::spawn_blocking(move || scan_directory(&root_for_scan, &events_for_scan))
+                .await
+                .context("directory scan panicked")??;
 
         Ok(Self {
             root,
@@ -320,7 +320,9 @@ impl PreparedSource {
         if meta.is_file() {
             Ok(Self::File(PreparedFile::open(options, events).await?))
         } else if meta.is_dir() {
-            Ok(Self::Directory(PreparedDirectory::open(options, events).await?))
+            Ok(Self::Directory(
+                PreparedDirectory::open(options, events).await?,
+            ))
         } else {
             bail!("send accepts a regular file or directory; special files are not supported");
         }
@@ -338,10 +340,7 @@ impl PreparedSource {
     }
 }
 
-fn scan_directory(
-    root: &Path,
-    events: &EventHandler,
-) -> Result<(Vec<DirScanEntry>, u64)> {
+fn scan_directory(root: &Path, events: &EventHandler) -> Result<(Vec<DirScanEntry>, u64)> {
     let mut queue = std::collections::VecDeque::new();
     queue.push_back(PathBuf::new());
     let mut entries = Vec::new();
@@ -386,16 +385,20 @@ fn scan_directory(
             let wire_path = rel_entry
                 .components()
                 .map(|c| {
-                    c.as_os_str()
-                        .to_str()
-                        .ok_or_else(|| anyhow!("non-UTF-8 path component in '{}'", rel_entry.display()))
+                    c.as_os_str().to_str().ok_or_else(|| {
+                        anyhow!("non-UTF-8 path component in '{}'", rel_entry.display())
+                    })
                 })
                 .collect::<Result<Vec<_>, _>>()?
                 .join("/");
 
             // Validate that the relative path complies with wire security rules
-            sanitize_relative_path(&wire_path)
-                .with_context(|| format!("source directory contains unportable or unsafe path '{}'", wire_path))?;
+            sanitize_relative_path(&wire_path).with_context(|| {
+                format!(
+                    "source directory contains unportable or unsafe path '{}'",
+                    wire_path
+                )
+            })?;
 
             if file_type.is_dir() {
                 entries.push(DirScanEntry::Directory {
@@ -405,9 +408,9 @@ fn scan_directory(
             } else if file_type.is_file() {
                 let metadata = entry.metadata()?;
                 let size = metadata.len();
-                total_size = total_size
-                    .checked_add(size)
-                    .ok_or_else(|| anyhow::anyhow!("directory total size exceeds 64-bit integer"))?;
+                total_size = total_size.checked_add(size).ok_or_else(|| {
+                    anyhow::anyhow!("directory total size exceeds 64-bit integer")
+                })?;
                 if total_size > MAX_FILE_SIZE {
                     bail!("directory total size exceeds maximum limit of 1 TiB");
                 }
@@ -804,7 +807,7 @@ async fn sender_file_protocol(
         });
     }
 
-    let mut progress = Progress::new(source.meta.size, events);
+    let mut progress = Progress::new(start_offset, source.meta.size, events);
     let mut buf = vec![0; CHUNK];
     let mut sent = start_offset;
     progress.update(sent);
@@ -903,7 +906,7 @@ async fn sender_dir_protocol(
     };
     write_frame(send, &meta, timeouts.io()).await?;
 
-    let mut progress = Progress::new(dir.total_size, events);
+    let mut progress = Progress::new(0, dir.total_size, events);
     let mut buf = vec![0; CHUNK];
     let mut sent = 0u64;
     let mut tree_hasher = blake3::Hasher::new();
@@ -963,10 +966,7 @@ async fn sender_dir_protocol(
                         .await
                         .context("reading file chunk")?;
                     if n == 0 {
-                        bail!(
-                            "source file {} truncated unexpectedly",
-                            abs_path.display()
-                        );
+                        bail!("source file {} truncated unexpectedly", abs_path.display());
                     }
                     file_hasher.update(&buf[..n]);
                     tokio::time::timeout(timeouts.io(), send.write_all(&buf[..n]))
@@ -982,7 +982,9 @@ async fn sender_dir_protocol(
                         let remaining_expected = dir.total_size - window_start_sent;
                         let min_required = MIN_THROUGHPUT_PER_WINDOW.min(remaining_expected);
                         if bytes_in_window < min_required && sent < dir.total_size {
-                            bail!("transfer rate too slow; aborted to prevent connection starvation");
+                            bail!(
+                                "transfer rate too slow; aborted to prevent connection starvation"
+                            );
                         }
                         window_start = Instant::now();
                         window_start_sent = sent;
@@ -997,14 +999,7 @@ async fn sender_dir_protocol(
                 tree_hasher.update(if *executable { &[1u8] } else { &[0u8] });
                 tree_hasher.update(file_hash.as_bytes());
 
-                write_frame(
-                    send,
-                    &DirFrame::FileEnd {
-                        hash: file_hash,
-                    },
-                    timeouts.io(),
-                )
-                .await?;
+                write_frame(send, &DirFrame::FileEnd { hash: file_hash }, timeouts.io()).await?;
             }
         }
     }
@@ -1079,7 +1074,11 @@ async fn receiver_protocol(
     if meta.size > options.max_size {
         bail!(
             "{} exceeds the receive limit of {} bytes; use --max-size to change it",
-            if meta.is_directory { "directory" } else { "file" },
+            if meta.is_directory {
+                "directory"
+            } else {
+                "file"
+            },
             options.max_size
         );
     }
@@ -1112,13 +1111,18 @@ async fn receiver_file_protocol(
     let directory = tokio::fs::canonicalize(&options.directory)
         .await
         .context("resolving destination directory")?;
-    let (mut resumable, resume_offset) = ResumableFile::open_or_resume(
+    let (mut resumable, mut resume_offset) = ResumableFile::open_or_resume(
         &directory,
         &meta.name,
         meta.size,
         &meta.hash,
         options.resume,
     )?;
+
+    if resume_offset > 0 && resume_offset % CHECKPOINT_INTERVAL != 0 {
+        resumable.discard_checkpoint();
+        resume_offset = 0;
+    }
 
     if resume_offset > 0 {
         events(Event::Resuming {
@@ -1148,13 +1152,14 @@ async fn receiver_file_protocol(
             start_offset
         }
         TransferResponse::Rejected { reason } => {
+            resumable.discard_checkpoint();
             bail!("sender rejected transfer request: {reason}");
         }
     };
 
     let mut received = start_offset;
     let mut last_checkpoint = start_offset;
-    let mut progress = Progress::new(meta.size, events);
+    let mut progress = Progress::new(start_offset, meta.size, events);
     progress.update(received);
     let mut window_start = Instant::now();
     let mut window_start_received = start_offset;
@@ -1171,11 +1176,13 @@ async fn receiver_file_protocol(
         received += chunk.bytes.len() as u64;
         progress.update(received);
 
-        let aligned_checkpoint = (received / CHECKPOINT_INTERVAL) * CHECKPOINT_INTERVAL;
-        if aligned_checkpoint > last_checkpoint && received < meta.size {
-            resumable.checkpoint(aligned_checkpoint)?;
-            last_checkpoint = aligned_checkpoint;
-            progress.force_update(received);
+        if options.resume {
+            let aligned_checkpoint = (received / CHECKPOINT_INTERVAL) * CHECKPOINT_INTERVAL;
+            if aligned_checkpoint > last_checkpoint && received < meta.size {
+                resumable.checkpoint(aligned_checkpoint)?;
+                last_checkpoint = aligned_checkpoint;
+                progress.force_update(received);
+            }
         }
 
         let elapsed = window_start.elapsed();
@@ -1270,7 +1277,7 @@ async fn receiver_dir_protocol(
     let mut received = 0u64;
     let mut received_entries = 0u64;
     let mut last_path: Option<String> = None;
-    let mut progress = Progress::new(meta.size, events);
+    let mut progress = Progress::new(0, meta.size, events);
     let mut window_start = Instant::now();
     let mut window_start_received = 0u64;
 
@@ -1330,13 +1337,11 @@ async fn receiver_dir_protocol(
 
                 while file_received < size {
                     let limit = ((size - file_received).min(CHUNK as u64)) as usize;
-                    let chunk = tokio::time::timeout(
-                        options.timeouts.io(),
-                        recv.read_chunk(limit, true),
-                    )
-                    .await
-                    .context("receiving stalled; temporary file removed")??
-                    .context("sender disconnected before all bytes arrived")?;
+                    let chunk =
+                        tokio::time::timeout(options.timeouts.io(), recv.read_chunk(limit, true))
+                            .await
+                            .context("receiving stalled; temporary file removed")??
+                            .context("sender disconnected before all bytes arrived")?;
                     if chunk.bytes.is_empty() {
                         continue;
                     }
@@ -1355,7 +1360,9 @@ async fn receiver_dir_protocol(
                         let remaining_expected = meta.size - window_start_received;
                         let min_required = MIN_THROUGHPUT_PER_WINDOW.min(remaining_expected);
                         if bytes_in_window < min_required && received < meta.size {
-                            bail!("transfer rate too slow; aborted to prevent connection starvation");
+                            bail!(
+                                "transfer rate too slow; aborted to prevent connection starvation"
+                            );
                         }
                         window_start = Instant::now();
                         window_start_received = received;
@@ -1375,10 +1382,7 @@ async fn receiver_dir_protocol(
 
                 let computed_file_hash = file_hasher.finalize().to_hex().to_string();
                 if computed_file_hash != expected_file_hash {
-                    bail!(
-                        "file integrity check failed for {}",
-                        safe_path.display()
-                    );
+                    bail!("file integrity check failed for {}", safe_path.display());
                 }
 
                 tree_hasher.update(b"F\0");
@@ -1514,9 +1518,9 @@ struct Progress<'a> {
     events: &'a EventHandler,
 }
 impl<'a> Progress<'a> {
-    fn new(total: u64, events: &'a EventHandler) -> Self {
+    fn new(initial: u64, total: u64, events: &'a EventHandler) -> Self {
         events(Event::Progress {
-            transferred: 0,
+            transferred: initial,
             total,
         });
         Self {

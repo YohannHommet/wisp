@@ -123,43 +123,63 @@ impl ResumableFile {
         let part_path = dir.join(format!(".wisp-{hash}.part"));
         let resume_path = dir.join(format!(".wisp-{hash}.resume"));
 
+        // Reject symlinks for partial and resume files to prevent symlink-following attacks
+        if let Ok(meta) = resume_path.symlink_metadata() {
+            if meta.file_type().is_symlink() || meta.len() > 64 * 1024 {
+                let _ = std::fs::remove_file(&resume_path);
+            }
+        }
+        if let Ok(meta) = part_path.symlink_metadata() {
+            if meta.file_type().is_symlink() {
+                let _ = std::fs::remove_file(&part_path);
+            }
+        }
+
         if resume_enabled && resume_path.exists() && part_path.exists() {
             if let Ok(bytes) = std::fs::read(&resume_path) {
                 if let Ok(ledger) = serde_json::from_slice::<ResumeLedger>(&bytes) {
-                    if ledger.version == 1
-                        && ledger.file_hash == hash
-                        && ledger.total_size == size
+                    if ledger.version == 1 && ledger.file_hash == hash && ledger.total_size == size
                     {
-                        if let Ok(metadata) = std::fs::metadata(&part_path) {
+                        if let Ok(metadata) = part_path.symlink_metadata() {
                             let disk_len = metadata.len();
                             let target_offset = ledger.checkpoint_offset;
                             if disk_len >= target_offset && target_offset <= size {
                                 use std::io::Seek;
-                                let mut file = std::fs::OpenOptions::new()
-                                    .read(true)
-                                    .write(true)
+                                let mut options = std::fs::OpenOptions::new();
+                                options.read(true).write(true);
+                                #[cfg(unix)]
+                                {
+                                    use std::os::unix::fs::OpenOptionsExt;
+                                    options.custom_flags(libc::O_NOFOLLOW);
+                                }
+                                let mut file = options
                                     .open(&part_path)
                                     .context("opening existing partial file")?;
-                                file.set_len(target_offset)
-                                    .context("truncating partial file to checkpoint")?;
-                                file.seek(std::io::SeekFrom::Start(target_offset))
-                                    .context("seeking partial file to checkpoint")?;
-                                return Ok((
-                                    Self {
-                                        file: Some(file),
-                                        part_path,
-                                        resume_path,
-                                        dir: dir.to_owned(),
-                                        file_hash: hash.to_owned(),
-                                        file_name: name.to_owned(),
-                                        total_size: size,
-                                        checkpoint_offset: target_offset,
-                                        has_checkpoint: target_offset > 0,
-                                        committed: false,
-                                        resume_enabled,
-                                    },
-                                    target_offset,
-                                ));
+                                let actual_len = file.metadata()?.len();
+                                if actual_len < target_offset {
+                                    let _ = std::fs::remove_file(&resume_path);
+                                } else {
+                                    file.set_len(target_offset)
+                                        .context("truncating partial file to checkpoint")?;
+                                    file.seek(std::io::SeekFrom::Start(target_offset))
+                                        .context("seeking partial file to checkpoint")?;
+                                    return Ok((
+                                        Self {
+                                            file: Some(file),
+                                            part_path,
+                                            resume_path,
+                                            dir: dir.to_owned(),
+                                            file_hash: hash.to_owned(),
+                                            file_name: name.to_owned(),
+                                            total_size: size,
+                                            checkpoint_offset: target_offset,
+                                            has_checkpoint: target_offset > 0,
+                                            committed: false,
+                                            resume_enabled,
+                                        },
+                                        target_offset,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -179,6 +199,7 @@ impl ResumableFile {
         {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
+            options.custom_flags(libc::O_NOFOLLOW);
         }
         let file = options
             .open(&part_path)
@@ -221,14 +242,41 @@ impl ResumableFile {
             total_size: self.total_size,
             checkpoint_offset: current_offset,
         };
-        let tmp_resume = self.dir.join(format!(".wisp-{}.resume.tmp", self.file_hash));
-        std::fs::write(&tmp_resume, serde_json::to_vec(&ledger)?)
+        let tmp_resume = self
+            .dir
+            .join(format!(".wisp-{}.resume.tmp", self.file_hash));
+        let ledger_bytes = serde_json::to_vec(&ledger)?;
+        let mut tmp_opts = std::fs::OpenOptions::new();
+        tmp_opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            tmp_opts.mode(0o600);
+            tmp_opts.custom_flags(libc::O_NOFOLLOW);
+        }
+        let mut tmp_file = tmp_opts
+            .open(&tmp_resume)
+            .context("creating temporary resume ledger")?;
+        tmp_file
+            .write_all(&ledger_bytes)
             .context("writing temporary resume ledger")?;
-        std::fs::rename(&tmp_resume, &self.resume_path)
-            .context("committing resume ledger")?;
+        tmp_file
+            .sync_all()
+            .context("syncing temporary resume ledger")?;
+        drop(tmp_file);
+        std::fs::rename(&tmp_resume, &self.resume_path).context("committing resume ledger")?;
         self.checkpoint_offset = current_offset;
         self.has_checkpoint = true;
         Ok(())
+    }
+
+    pub fn discard_checkpoint(&mut self) {
+        self.has_checkpoint = false;
+        let _ = std::fs::remove_file(&self.resume_path);
+        let _ = std::fs::remove_file(
+            self.dir
+                .join(format!(".wisp-{}.resume.tmp", self.file_hash)),
+        );
     }
 
     pub fn commit(mut self, expected_hash: &str) -> Result<PublishedFile> {
@@ -237,11 +285,11 @@ impl ResumableFile {
         file.flush().context("flushing received file")?;
         file.sync_all().context("syncing received file")?;
 
-        // Rewind to 0 and verify full BLAKE3 hash from disk
+        // Rewind to 0 and verify full BLAKE3 hash from disk with 1 MiB buffer
         file.seek(SeekFrom::Start(0))
             .context("rewinding file for hash verification")?;
         let mut hasher = blake3::Hasher::new();
-        let mut buf = vec![0u8; 64 * 1024];
+        let mut buf = vec![0u8; 1024 * 1024];
         loop {
             let n = file
                 .read(&mut buf)
@@ -260,7 +308,7 @@ impl ResumableFile {
             bail!("file integrity check failed on disk; temporary file removed");
         }
 
-        // Close file handle before rename
+        // Close file handle before rename/link
         drop(file);
 
         let safe = sanitize(&self.file_name);
@@ -275,8 +323,17 @@ impl ResumableFile {
             {
                 match std::fs::hard_link(&self.part_path, &target_path) {
                     Ok(()) => {
-                        let _ = std::fs::remove_file(&self.part_path);
+                        if let Err(err) = std::fs::remove_file(&self.part_path) {
+                            // If unlinking part_path fails, delete target_path to avoid
+                            // shared inode hazard where a subsequent transfer would truncate target!
+                            let _ = std::fs::remove_file(&target_path);
+                            return Err(err).context("cleaning up partial file during publish");
+                        }
                         let _ = std::fs::remove_file(&self.resume_path);
+                        let _ = std::fs::remove_file(
+                            self.dir
+                                .join(format!(".wisp-{}.resume.tmp", self.file_hash)),
+                        );
                         self.committed = true;
 
                         let mut sync_warning = None;
@@ -299,15 +356,9 @@ impl ResumableFile {
                         });
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                    Err(_) => {
-                        if std::fs::rename(&self.part_path, &target_path).is_ok() {
-                            let _ = std::fs::remove_file(&self.resume_path);
-                            self.committed = true;
-                            return Ok(PublishedFile {
-                                path: target_path,
-                                sync_warning: None,
-                            });
-                        }
+                    Err(err) => {
+                        // Fail immediately on permission, read-only, or quota errors. Do not swallow or loop.
+                        return Err(err).context("publishing received file without overwriting");
                     }
                 }
             }
@@ -317,6 +368,10 @@ impl ResumableFile {
                 match std::fs::rename(&self.part_path, &target_path) {
                     Ok(()) => {
                         let _ = std::fs::remove_file(&self.resume_path);
+                        let _ = std::fs::remove_file(
+                            self.dir
+                                .join(format!(".wisp-{}.resume.tmp", self.file_hash)),
+                        );
                         self.committed = true;
                         return Ok(PublishedFile {
                             path: target_path,
@@ -339,6 +394,10 @@ impl Drop for ResumableFile {
         if self.committed {
             return;
         }
+        let tmp_resume = self
+            .dir
+            .join(format!(".wisp-{}.resume.tmp", self.file_hash));
+        let _ = std::fs::remove_file(&tmp_resume);
         if self.resume_enabled && self.has_checkpoint {
             return;
         }
@@ -352,26 +411,32 @@ impl Drop for ResumableFile {
 pub fn clean_stale_partial_files(dir: &Path, max_age: std::time::Duration) -> Result<usize> {
     let mut cleaned = 0;
     let now = std::time::SystemTime::now();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                if file_name.starts_with(".wisp-")
-                    && (file_name.ends_with(".part") || file_name.ends_with(".resume"))
-                {
-                    if let Ok(meta) = entry.metadata() {
-                        if let Ok(modified) = meta.modified() {
-                            if let Ok(age) = now.duration_since(modified) {
-                                if age >= max_age {
-                                    if meta.is_dir() {
-                                        if std::fs::remove_dir_all(&path).is_ok() {
-                                            cleaned += 1;
-                                        }
-                                    } else if std::fs::remove_file(&path).is_ok() {
-                                        cleaned += 1;
-                                    }
-                                }
+    let entries = std::fs::read_dir(dir).context("reading directory to clean")?;
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+            if file_name.starts_with(".wisp-")
+                && !file_name.starts_with(".wisp-dir-")
+                && (file_name.ends_with(".part")
+                    || file_name.ends_with(".resume")
+                    || file_name.ends_with(".resume.tmp"))
+            {
+                if let Ok(meta) = path.symlink_metadata() {
+                    let is_stale = meta
+                        .modified()
+                        .ok()
+                        .and_then(|m| now.duration_since(m).ok())
+                        .map(|age| age >= max_age)
+                        .unwrap_or(false);
+
+                    if is_stale {
+                        if meta.is_dir() && !meta.file_type().is_symlink() {
+                            if std::fs::remove_dir_all(&path).is_ok() {
+                                cleaned += 1;
                             }
+                        } else if std::fs::remove_file(&path).is_ok() {
+                            cleaned += 1;
                         }
                     }
                 }
@@ -380,8 +445,6 @@ pub fn clean_stale_partial_files(dir: &Path, max_age: std::time::Duration) -> Re
     }
     Ok(cleaned)
 }
-
-
 
 pub(crate) struct PendingDirectory {
     temp_dir: Option<tempfile::TempDir>,
@@ -888,4 +951,3 @@ mod tests {
         assert!(normal_file.exists());
     }
 }
-

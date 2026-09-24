@@ -255,7 +255,9 @@ async fn complete_directory_transfer_with_nested_structure() {
     );
     assert!(dest_project.join("empty_dir").is_dir());
     assert_eq!(
-        std::fs::read_dir(dest_project.join("empty_dir")).unwrap().count(),
+        std::fs::read_dir(dest_project.join("empty_dir"))
+            .unwrap()
+            .count(),
         0
     );
 }
@@ -392,7 +394,9 @@ async fn directory_with_symlinks_skips_and_delivers_cleanly() {
         assert!(!dest_dir.join("evil_external_link").exists());
         assert!(!dest_dir.join("broken_link").exists());
         let logged_warnings = warnings.lock().unwrap();
-        assert!(logged_warnings.iter().any(|w| w.contains("skipping symlink")));
+        assert!(logged_warnings
+            .iter()
+            .any(|w| w.contains("skipping symlink")));
     }
 }
 
@@ -491,7 +495,10 @@ async fn directory_multiple_collisions_resolves_to_next_index() {
 
     assert_eq!(sent.hash, receipt.hash);
     let expected_dest = destination.path().join("dataset (3)");
-    assert!(expected_dest.exists(), "directory should resolve to dataset (3)");
+    assert!(
+        expected_dest.exists(),
+        "directory should resolve to dataset (3)"
+    );
     assert_eq!(
         std::fs::read(expected_dest.join("sample.txt")).unwrap(),
         b"fresh content"
@@ -523,13 +530,20 @@ async fn directory_with_empty_files_and_nested_structure() {
     let dest_dir = destination.path().join("structure");
     assert!(dest_dir.join("empty_subdir").is_dir());
     assert!(dest_dir.join("empty_root.txt").is_file());
-    assert_eq!(std::fs::metadata(dest_dir.join("empty_root.txt")).unwrap().len(), 0);
+    assert_eq!(
+        std::fs::metadata(dest_dir.join("empty_root.txt"))
+            .unwrap()
+            .len(),
+        0
+    );
     assert_eq!(
         std::fs::read(dest_dir.join("mixed_subdir/payload.txt")).unwrap(),
         b"not empty"
     );
     assert_eq!(
-        std::fs::metadata(dest_dir.join("mixed_subdir/empty_nested.txt")).unwrap().len(),
+        std::fs::metadata(dest_dir.join("mixed_subdir/empty_nested.txt"))
+            .unwrap()
+            .len(),
         0
     );
 }
@@ -539,9 +553,7 @@ async fn single_file_mid_transfer_cut_and_resumption_with_fresh_code() {
     let source = tempfile::tempdir().unwrap();
     let destination = tempfile::tempdir().unwrap();
     let path = source.path().join("large_file.bin");
-    let content: Vec<u8> = (0..(32 * 1024 * 1024))
-        .map(|i| (i % 251) as u8)
-        .collect();
+    let content: Vec<u8> = (0..(32 * 1024 * 1024)).map(|i| (i % 251) as u8).collect();
     std::fs::write(&path, &content).unwrap();
 
     let (sender1, code1, address1) = start(&path, quiet()).await;
@@ -591,9 +603,12 @@ async fn single_file_mid_transfer_cut_and_resumption_with_fresh_code() {
         }
     });
 
-    let receipt = receive_file(receiver(code2, address2, destination.path()), resume_handler)
-        .await
-        .unwrap();
+    let receipt = receive_file(
+        receiver(code2, address2, destination.path()),
+        resume_handler,
+    )
+    .await
+    .unwrap();
     let sent = sender2.await.unwrap().unwrap();
 
     assert_eq!(
@@ -622,9 +637,7 @@ async fn resumption_with_bit_rot_in_partial_file_fails_verification_and_cleans_u
     let source = tempfile::tempdir().unwrap();
     let destination = tempfile::tempdir().unwrap();
     let path = source.path().join("bitrot.bin");
-    let content: Vec<u8> = (0..(32 * 1024 * 1024))
-        .map(|i| (i % 251) as u8)
-        .collect();
+    let content: Vec<u8> = (0..(32 * 1024 * 1024)).map(|i| (i % 251) as u8).collect();
     std::fs::write(&path, &content).unwrap();
 
     let (sender1, code1, address1) = start(&path, quiet()).await;
@@ -676,8 +689,14 @@ async fn resumption_with_bit_rot_in_partial_file_fails_verification_and_cleans_u
     let recv_res = receive_file(receiver(code2, address2, destination.path()), quiet()).await;
     let sender_res = sender2.await.unwrap();
 
-    assert!(recv_res.is_err(), "receiver must detect hash mismatch on disk");
-    assert!(sender_res.is_err(), "sender must receive error response from receiver");
+    assert!(
+        recv_res.is_err(),
+        "receiver must detect hash mismatch on disk"
+    );
+    assert!(
+        sender_res.is_err(),
+        "sender must receive error response from receiver"
+    );
 
     for entry in std::fs::read_dir(destination.path()).unwrap().flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -693,9 +712,7 @@ async fn resumption_with_modified_source_starts_fresh_and_succeeds() {
     let source = tempfile::tempdir().unwrap();
     let destination = tempfile::tempdir().unwrap();
     let path = source.path().join("data.bin");
-    let content1: Vec<u8> = (0..(32 * 1024 * 1024))
-        .map(|i| (i % 251) as u8)
-        .collect();
+    let content1: Vec<u8> = (0..(32 * 1024 * 1024)).map(|i| (i % 251) as u8).collect();
     std::fs::write(&path, &content1).unwrap();
 
     let (sender1, code1, address1) = start(&path, quiet()).await;
@@ -741,7 +758,10 @@ async fn resumption_with_modified_source_starts_fresh_and_succeeds() {
         .unwrap();
     let sent = sender2.await.unwrap().unwrap();
 
-    assert!(!*resumed.lock().unwrap(), "should not resume because hash differed");
+    assert!(
+        !*resumed.lock().unwrap(),
+        "should not resume because hash differed"
+    );
     assert_eq!(sent.hash, receipt.hash);
     let saved_path = receipt.saved_to.unwrap();
     assert_eq!(std::fs::read(&saved_path).unwrap(), content2);
@@ -752,9 +772,7 @@ async fn resumption_no_resume_flag_starts_from_zero() {
     let source = tempfile::tempdir().unwrap();
     let destination = tempfile::tempdir().unwrap();
     let path = source.path().join("data_no_resume.bin");
-    let content: Vec<u8> = (0..(32 * 1024 * 1024))
-        .map(|i| (i % 251) as u8)
-        .collect();
+    let content: Vec<u8> = (0..(32 * 1024 * 1024)).map(|i| (i % 251) as u8).collect();
     std::fs::write(&path, &content).unwrap();
 
     let (sender1, code1, address1) = start(&path, quiet()).await;
@@ -795,7 +813,10 @@ async fn resumption_no_resume_flag_starts_from_zero() {
     let receipt = receive_file(recv_opts, check_handler).await.unwrap();
     let sent = sender2.await.unwrap().unwrap();
 
-    assert!(!*resumed.lock().unwrap(), "should not resume because resume option was disabled");
+    assert!(
+        !*resumed.lock().unwrap(),
+        "should not resume because resume option was disabled"
+    );
     assert_eq!(sent.hash, receipt.hash);
     let saved_path = receipt.saved_to.unwrap();
     assert_eq!(std::fs::read(&saved_path).unwrap(), content);
@@ -818,7 +839,3 @@ async fn clean_stale_partial_files_removes_old_ledger_and_part_files() {
     assert!(!resume_file.exists());
     assert!(normal_file.exists());
 }
-
-
-
-

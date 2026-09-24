@@ -259,16 +259,13 @@ impl Output {
                 "directory": dir.display().to_string(),
                 "count": count,
             }));
-        } else {
+        } else if !self.quiet {
+            let dir_disp = terminal_text(&dir.display().to_string());
             self.stdout(|out| {
                 if count == 0 {
-                    writeln!(out, "No stale partial files found in {}", dir.display())
+                    writeln!(out, "No stale partial files found in {dir_disp}")
                 } else {
-                    writeln!(
-                        out,
-                        "Cleaned {count} stale partial file(s) in {}",
-                        dir.display()
-                    )
+                    writeln!(out, "Cleaned {count} stale partial file(s) in {dir_disp}",)
                 }
             });
         }
@@ -279,7 +276,11 @@ impl Output {
             self.line(serde_json::json!({"event":"completed", "receipt":receipt}));
         } else {
             self.stdout(|out| {
-                let kind = if receipt.is_directory { "directory" } else { "file" };
+                let kind = if receipt.is_directory {
+                    "directory"
+                } else {
+                    "file"
+                };
                 if let Some(path) = receipt.saved_to {
                     writeln!(
                         out,

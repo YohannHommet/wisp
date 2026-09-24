@@ -1225,3 +1225,50 @@ async fn cancelled_directory_receiver_removes_its_staging_dir() {
     server.abort();
     let _ = server.await;
 }
+
+#[tokio::test]
+async fn frame_reading_supports_deep_path_headers() {
+    let (sc, cc) = connections().await;
+
+    // Construct a valid deep path just under 2048 bytes (e.g. 25 segments of 60 chars = ~1524 chars)
+    let segment = "a".repeat(60);
+    let deep_path = (0..25)
+        .map(|_| segment.as_str())
+        .collect::<Vec<_>>()
+        .join("/");
+    assert!(deep_path.len() > 1500 && deep_path.len() <= 2048);
+
+    let frame = DirFrame::FileHeader {
+        path: deep_path.clone(),
+        size: 42,
+        executable: false,
+    };
+
+    let (mut client_send, _client_recv) = cc.open_bi().await.unwrap();
+
+    let server = tokio::spawn(async move {
+        let (_s, mut r) = sc.accept_bi().await.unwrap();
+        read_frame::<DirFrame>(&mut r, Duration::from_secs(2))
+            .await
+            .unwrap()
+    });
+
+    write_frame(&mut client_send, &frame, Duration::from_secs(2))
+        .await
+        .unwrap();
+
+    let read_result = server.await.unwrap();
+
+    match read_result {
+        DirFrame::FileHeader {
+            path,
+            size,
+            executable,
+        } => {
+            assert_eq!(path, deep_path);
+            assert_eq!(size, 42);
+            assert!(!executable);
+        }
+        _ => panic!("unexpected frame type"),
+    }
+}

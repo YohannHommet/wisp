@@ -24,7 +24,7 @@ use tokio::{
 const CHUNK: usize = 64 * 1024;
 // Amortize Tokio's blocking-file handoff while keeping preparation memory bounded.
 const HASH_CHUNK: usize = 256 * 1024;
-const MAX_FRAME: usize = 4096;
+const MAX_FRAME: usize = 64 * 1024;
 pub const MAX_FILE_SIZE: u64 = 1 << 40;
 // Minimum bytes transferred per io timeout window to mitigate Slowloris resource exhaustion.
 const MIN_THROUGHPUT_PER_WINDOW: u64 = 16 * 1024;
@@ -1492,11 +1492,17 @@ async fn read_frame<T: DeserializeOwned>(recv: &mut RecvStream, timeout: Duratio
         recv.read_exact(&mut len).await?;
         let len = u32::from_be_bytes(len) as usize;
         if len == 0 || len > MAX_FRAME {
-            bail!("invalid protocol frame length");
+            bail!("invalid protocol frame length: {len}");
         }
-        let mut bytes = vec![0; len];
-        recv.read_exact(&mut bytes).await?;
-        serde_json::from_slice(&bytes).context("invalid protocol message")
+        if len <= 4096 {
+            let mut stack_buf = [0u8; 4096];
+            recv.read_exact(&mut stack_buf[..len]).await?;
+            serde_json::from_slice(&stack_buf[..len]).context("invalid protocol message")
+        } else {
+            let mut bytes = vec![0; len];
+            recv.read_exact(&mut bytes).await?;
+            serde_json::from_slice(&bytes).context("invalid protocol message")
+        }
     })
     .await
     .context("protocol read timed out")?

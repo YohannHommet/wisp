@@ -356,6 +356,59 @@ impl ResumableFile {
                         });
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(err)
+                        if err.kind() == std::io::ErrorKind::Unsupported
+                            || err.raw_os_error().is_some_and(|code| {
+                                code == libc::EPERM
+                                    || code == libc::ENOTSUP
+                                    || code == libc::EOPNOTSUPP
+                                    || code == libc::EXDEV
+                            }) =>
+                    {
+                        // The underlying filesystem does not support hard links (e.g. FAT32/exFAT, CIFS/NFS).
+                        // Fall back to rename with pre-checked non-existence.
+                        if target_path.symlink_metadata().is_ok() {
+                            continue;
+                        }
+                        match std::fs::rename(&self.part_path, &target_path) {
+                            Ok(()) => {
+                                let _ = std::fs::remove_file(&self.resume_path);
+                                let _ = std::fs::remove_file(
+                                    self.dir
+                                        .join(format!(".wisp-{}.resume.tmp", self.file_hash)),
+                                );
+                                self.committed = true;
+
+                                let mut sync_warning = None;
+                                if let Ok(dir_file) = std::fs::File::open(&self.dir) {
+                                    if let Err(err) = dir_file.sync_all() {
+                                        sync_warning = Some(format!(
+                                            "file saved at {}, but syncing its directory failed: {err}",
+                                            target_path.display()
+                                        ));
+                                    }
+                                } else {
+                                    sync_warning = Some(format!(
+                                        "file saved at {}, but opening its directory for sync failed",
+                                        target_path.display()
+                                    ));
+                                }
+                                return Ok(PublishedFile {
+                                    path: target_path,
+                                    sync_warning,
+                                });
+                            }
+                            Err(rename_err)
+                                if rename_err.kind() == std::io::ErrorKind::AlreadyExists =>
+                            {
+                                continue;
+                            }
+                            Err(rename_err) => {
+                                return Err(rename_err)
+                                    .context("publishing received file without overwriting");
+                            }
+                        }
+                    }
                     Err(err) => {
                         // Fail immediately on permission, read-only, or quota errors. Do not swallow or loop.
                         return Err(err).context("publishing received file without overwriting");
@@ -417,7 +470,6 @@ pub fn clean_stale_partial_files(dir: &Path, max_age: std::time::Duration) -> Re
         let path = entry.path();
         if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
             if file_name.starts_with(".wisp-")
-                && !file_name.starts_with(".wisp-dir-")
                 && (file_name.ends_with(".part")
                     || file_name.ends_with(".resume")
                     || file_name.ends_with(".resume.tmp"))
@@ -505,7 +557,6 @@ impl PendingDirectory {
     pub fn commit(mut self, name: &str) -> Result<PublishedFile> {
         let temp = self.temp_dir.take().expect("temp_dir present");
         let staging_path = temp.path().to_owned();
-        let _ = temp.keep();
         let safe = sanitize(name);
         for index in 0..10_000 {
             let candidate_name = collision_name(&safe, index);
@@ -519,9 +570,9 @@ impl PendingDirectory {
                     Ok(()) => {
                         if let Err(err) = std::fs::rename(&staging_path, &target_path) {
                             let _ = std::fs::remove_dir(&target_path);
-                            let _ = std::fs::remove_dir_all(&staging_path);
                             return Err(err).context("publishing received directory");
                         }
+                        let _ = temp.keep();
                         let mut sync_warning = None;
                         if let Ok(dir_file) = std::fs::File::open(&self.dest_dir) {
                             if let Err(err) = dir_file.sync_all() {
@@ -543,7 +594,6 @@ impl PendingDirectory {
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
                     Err(err) => {
-                        let _ = std::fs::remove_dir_all(&staging_path);
                         return Err(err).context("reserving destination directory");
                     }
                 }
@@ -552,6 +602,7 @@ impl PendingDirectory {
             {
                 match std::fs::rename(&staging_path, &target_path) {
                     Ok(()) => {
+                        let _ = temp.keep();
                         return Ok(PublishedFile {
                             path: target_path,
                             sync_warning: None,
@@ -559,13 +610,11 @@ impl PendingDirectory {
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
                     Err(err) => {
-                        let _ = std::fs::remove_dir_all(&staging_path);
                         return Err(err).context("publishing received directory");
                     }
                 }
             }
         }
-        let _ = std::fs::remove_dir_all(&staging_path);
         bail!("too many items named {safe}; choose another destination directory")
     }
 }
@@ -647,6 +696,9 @@ pub fn sanitize_relative_path(wire_path: &str) -> Result<PathBuf> {
     if wire_path.is_empty() {
         bail!("empty relative path");
     }
+    if wire_path.len() > 2048 {
+        bail!("relative path exceeds 2048 bytes");
+    }
     if wire_path.contains('\\') {
         bail!("relative path cannot contain backslashes");
     }
@@ -683,23 +735,23 @@ pub fn sanitize_relative_path(wire_path: &str) -> Result<PathBuf> {
                 bail!("relative path contains invalid or bidirectional control character");
             }
         }
-        let stem = segment
-            .split('.')
-            .next()
-            .unwrap_or_default()
-            .trim_end()
-            .to_ascii_uppercase();
-        if matches!(
-            stem.as_str(),
-            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" | "CLOCK$"
-        ) || ["COM", "LPT"].iter().any(|prefix| {
-            stem.strip_prefix(prefix).is_some_and(|n| {
-                matches!(
-                    n,
-                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-                )
-            })
-        }) {
+        let stem = segment.split('.').next().unwrap_or_default().trim_end();
+        let is_reserved = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$"]
+            .iter()
+            .any(|r| stem.eq_ignore_ascii_case(r))
+            || ["COM", "LPT"].iter().any(|prefix| {
+                if stem.len() == prefix.len() + 1 || stem.len() == prefix.len() + 2 {
+                    let (p, s) = stem.split_at(prefix.len());
+                    p.eq_ignore_ascii_case(prefix)
+                        && matches!(
+                            s,
+                            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                        )
+                } else {
+                    false
+                }
+            });
+        if is_reserved {
             bail!("relative path component matches Windows reserved device name: {stem}");
         }
         safe_path.push(segment);
@@ -807,6 +859,10 @@ mod tests {
         assert!(sanitize_relative_path("foo./bar").is_err());
         assert!(sanitize_relative_path("foo /bar").is_err());
         assert!(sanitize_relative_path("foo/\u{202e}bar").is_err());
+
+        // Length limit
+        let overlong = "a/".repeat(1025);
+        assert!(sanitize_relative_path(&overlong).is_err());
     }
 
     #[test]
@@ -937,17 +993,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let old_part = dir.path().join(".wisp-stale.part");
         let old_resume = dir.path().join(".wisp-stale.resume");
+        let old_tmp = dir.path().join(".wisp-stale.resume.tmp");
+        let old_dir = dir.path().join(".wisp-dir-stale.part");
         let normal_file = dir.path().join("normal.txt");
 
         std::fs::write(&old_part, b"stale").unwrap();
         std::fs::write(&old_resume, b"stale").unwrap();
+        std::fs::write(&old_tmp, b"stale").unwrap();
+        std::fs::create_dir_all(old_dir.join("sub")).unwrap();
+        std::fs::write(old_dir.join("sub").join("nested.txt"), b"stale data").unwrap();
         std::fs::write(&normal_file, b"keep").unwrap();
 
         // 0-duration max_age cleans everything starting with .wisp-
         let cleaned = clean_stale_partial_files(dir.path(), Duration::from_secs(0)).unwrap();
-        assert_eq!(cleaned, 2);
+        assert_eq!(cleaned, 4);
         assert!(!old_part.exists());
         assert!(!old_resume.exists());
+        assert!(!old_tmp.exists());
+        assert!(!old_dir.exists());
         assert!(normal_file.exists());
     }
 }

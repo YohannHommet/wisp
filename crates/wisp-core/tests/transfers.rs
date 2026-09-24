@@ -534,5 +534,291 @@ async fn directory_with_empty_files_and_nested_structure() {
     );
 }
 
+#[tokio::test]
+async fn single_file_mid_transfer_cut_and_resumption_with_fresh_code() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let path = source.path().join("large_file.bin");
+    let content: Vec<u8> = (0..(32 * 1024 * 1024))
+        .map(|i| (i % 251) as u8)
+        .collect();
+    std::fs::write(&path, &content).unwrap();
+
+    let (sender1, code1, address1) = start(&path, quiet()).await;
+
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    let cancel_tx = Mutex::new(Some(cancel_tx));
+    let progress_handler: EventHandler = Arc::new(move |event| {
+        if let Event::Progress { transferred, .. } = event {
+            if transferred >= 16 * 1024 * 1024 + 64 * 1024 {
+                if let Some(tx) = cancel_tx.lock().unwrap().take() {
+                    let _ = tx.send(());
+                }
+            }
+        }
+    });
+
+    let recv_opts = receiver(code1, address1, destination.path());
+    tokio::select! {
+        _ = receive_file(recv_opts, progress_handler) => {
+            panic!("transfer completed before cancellation");
+        }
+        _ = cancel_rx => {}
+    }
+    let _ = sender1.await;
+
+    let mut part_found = false;
+    let mut resume_found = false;
+    for entry in std::fs::read_dir(destination.path()).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with(".wisp-") && name.ends_with(".part") {
+            part_found = true;
+        }
+        if name.starts_with(".wisp-") && name.ends_with(".resume") {
+            resume_found = true;
+        }
+    }
+    assert!(part_found, "partial file must be preserved on disk");
+    assert!(resume_found, "resume ledger must be preserved on disk");
+
+    let (sender2, code2, address2) = start(&path, quiet()).await;
+
+    let resumed_offset = Arc::new(Mutex::new(None));
+    let resumed_offset_clone = resumed_offset.clone();
+    let resume_handler: EventHandler = Arc::new(move |event| {
+        if let Event::Resuming { offset, .. } = event {
+            *resumed_offset_clone.lock().unwrap() = Some(offset);
+        }
+    });
+
+    let receipt = receive_file(receiver(code2, address2, destination.path()), resume_handler)
+        .await
+        .unwrap();
+    let sent = sender2.await.unwrap().unwrap();
+
+    assert_eq!(
+        *resumed_offset.lock().unwrap(),
+        Some(16 * 1024 * 1024),
+        "resumption event should report 16 MiB offset"
+    );
+    assert_eq!(sent.hash, receipt.hash);
+    assert_eq!(sent.size, content.len() as u64);
+    assert_eq!(receipt.size, content.len() as u64);
+
+    let saved_path = receipt.saved_to.unwrap();
+    assert_eq!(std::fs::read(&saved_path).unwrap(), content);
+
+    for entry in std::fs::read_dir(destination.path()).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        assert!(
+            !name.starts_with(".wisp-"),
+            "residual file left behind: {name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn resumption_with_bit_rot_in_partial_file_fails_verification_and_cleans_up() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let path = source.path().join("bitrot.bin");
+    let content: Vec<u8> = (0..(32 * 1024 * 1024))
+        .map(|i| (i % 251) as u8)
+        .collect();
+    std::fs::write(&path, &content).unwrap();
+
+    let (sender1, code1, address1) = start(&path, quiet()).await;
+
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    let cancel_tx = Mutex::new(Some(cancel_tx));
+    let progress_handler: EventHandler = Arc::new(move |event| {
+        if let Event::Progress { transferred, .. } = event {
+            if transferred >= 16 * 1024 * 1024 + 64 * 1024 {
+                if let Some(tx) = cancel_tx.lock().unwrap().take() {
+                    let _ = tx.send(());
+                }
+            }
+        }
+    });
+
+    let recv_opts = receiver(code1, address1, destination.path());
+    tokio::select! {
+        _ = receive_file(recv_opts, progress_handler) => {
+            panic!("transfer completed before cancellation");
+        }
+        _ = cancel_rx => {}
+    }
+    let _ = sender1.await;
+
+    let mut part_path = None;
+    for entry in std::fs::read_dir(destination.path()).unwrap().flatten() {
+        let p = entry.path();
+        if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with(".wisp-") && name.ends_with(".part") {
+                part_path = Some(p);
+                break;
+            }
+        }
+    }
+    let part_path = part_path.expect("part file must exist");
+
+    use std::io::{Seek, SeekFrom, Write};
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&part_path)
+        .unwrap();
+    f.seek(SeekFrom::Start(42)).unwrap();
+    f.write_all(b"\xff").unwrap();
+    f.flush().unwrap();
+    drop(f);
+
+    let (sender2, code2, address2) = start(&path, quiet()).await;
+    let recv_res = receive_file(receiver(code2, address2, destination.path()), quiet()).await;
+    let sender_res = sender2.await.unwrap();
+
+    assert!(recv_res.is_err(), "receiver must detect hash mismatch on disk");
+    assert!(sender_res.is_err(), "sender must receive error response from receiver");
+
+    for entry in std::fs::read_dir(destination.path()).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        assert!(
+            !name.starts_with(".wisp-"),
+            "corrupted part file should have been cleaned up: {name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn resumption_with_modified_source_starts_fresh_and_succeeds() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let path = source.path().join("data.bin");
+    let content1: Vec<u8> = (0..(32 * 1024 * 1024))
+        .map(|i| (i % 251) as u8)
+        .collect();
+    std::fs::write(&path, &content1).unwrap();
+
+    let (sender1, code1, address1) = start(&path, quiet()).await;
+
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    let cancel_tx = Mutex::new(Some(cancel_tx));
+    let progress_handler: EventHandler = Arc::new(move |event| {
+        if let Event::Progress { transferred, .. } = event {
+            if transferred >= 16 * 1024 * 1024 + 64 * 1024 {
+                if let Some(tx) = cancel_tx.lock().unwrap().take() {
+                    let _ = tx.send(());
+                }
+            }
+        }
+    });
+
+    let recv_opts = receiver(code1, address1, destination.path());
+    tokio::select! {
+        _ = receive_file(recv_opts, progress_handler) => {
+            panic!("transfer completed before cancellation");
+        }
+        _ = cancel_rx => {}
+    }
+    let _ = sender1.await;
+
+    let content2: Vec<u8> = (0..(32 * 1024 * 1024))
+        .map(|i| ((i + 1) % 251) as u8)
+        .collect();
+    std::fs::write(&path, &content2).unwrap();
+
+    let (sender2, code2, address2) = start(&path, quiet()).await;
+
+    let resumed = Arc::new(Mutex::new(false));
+    let resumed_clone = resumed.clone();
+    let check_handler: EventHandler = Arc::new(move |event| {
+        if matches!(event, Event::Resuming { .. }) {
+            *resumed_clone.lock().unwrap() = true;
+        }
+    });
+
+    let receipt = receive_file(receiver(code2, address2, destination.path()), check_handler)
+        .await
+        .unwrap();
+    let sent = sender2.await.unwrap().unwrap();
+
+    assert!(!*resumed.lock().unwrap(), "should not resume because hash differed");
+    assert_eq!(sent.hash, receipt.hash);
+    let saved_path = receipt.saved_to.unwrap();
+    assert_eq!(std::fs::read(&saved_path).unwrap(), content2);
+}
+
+#[tokio::test]
+async fn resumption_no_resume_flag_starts_from_zero() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let path = source.path().join("data_no_resume.bin");
+    let content: Vec<u8> = (0..(32 * 1024 * 1024))
+        .map(|i| (i % 251) as u8)
+        .collect();
+    std::fs::write(&path, &content).unwrap();
+
+    let (sender1, code1, address1) = start(&path, quiet()).await;
+
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    let cancel_tx = Mutex::new(Some(cancel_tx));
+    let progress_handler: EventHandler = Arc::new(move |event| {
+        if let Event::Progress { transferred, .. } = event {
+            if transferred >= 16 * 1024 * 1024 + 64 * 1024 {
+                if let Some(tx) = cancel_tx.lock().unwrap().take() {
+                    let _ = tx.send(());
+                }
+            }
+        }
+    });
+
+    let recv_opts = receiver(code1, address1, destination.path());
+    tokio::select! {
+        _ = receive_file(recv_opts, progress_handler) => {
+            panic!("transfer completed before cancellation");
+        }
+        _ = cancel_rx => {}
+    }
+    let _ = sender1.await;
+
+    let (sender2, code2, address2) = start(&path, quiet()).await;
+    let mut recv_opts = receiver(code2, address2, destination.path());
+    recv_opts.resume = false;
+
+    let resumed = Arc::new(Mutex::new(false));
+    let resumed_clone = resumed.clone();
+    let check_handler: EventHandler = Arc::new(move |event| {
+        if matches!(event, Event::Resuming { .. }) {
+            *resumed_clone.lock().unwrap() = true;
+        }
+    });
+
+    let receipt = receive_file(recv_opts, check_handler).await.unwrap();
+    let sent = sender2.await.unwrap().unwrap();
+
+    assert!(!*resumed.lock().unwrap(), "should not resume because resume option was disabled");
+    assert_eq!(sent.hash, receipt.hash);
+    let saved_path = receipt.saved_to.unwrap();
+    assert_eq!(std::fs::read(&saved_path).unwrap(), content);
+}
+
+#[tokio::test]
+async fn clean_stale_partial_files_removes_old_ledger_and_part_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let part_file = dir.path().join(".wisp-abcdef0123456789.part");
+    let resume_file = dir.path().join(".wisp-abcdef0123456789.resume");
+    let normal_file = dir.path().join("keep_me.txt");
+
+    std::fs::write(&part_file, b"partial data").unwrap();
+    std::fs::write(&resume_file, b"resume data").unwrap();
+    std::fs::write(&normal_file, b"user data").unwrap();
+
+    let cleaned = wisp_core::clean_stale_partial_files(dir.path(), Duration::ZERO).unwrap();
+    assert_eq!(cleaned, 2);
+    assert!(!part_file.exists());
+    assert!(!resume_file.exists());
+    assert!(normal_file.exists());
+}
+
+
 
 

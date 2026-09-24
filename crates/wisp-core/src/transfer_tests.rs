@@ -229,6 +229,9 @@ async fn absent_or_forged_receipt_never_confirms_delivery() {
         .await
         .unwrap();
         s.write_all(b"GET").await.unwrap();
+        let _meta: FileMeta = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
+        write_frame(&mut s, &TransferRequest::Full, Duration::from_secs(1)).await.unwrap();
+        let _resp: TransferResponse = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
         let _ = r.read_to_end(MAX_FRAME + 100).await.unwrap();
         if forge {
             write_frame(
@@ -259,7 +262,7 @@ async fn cancelled_receiver_removes_its_partial_file() {
         ..ReceiveOptions::new(code.clone(), destination.path().into())
     };
     let server = tokio::spawn(async move {
-        let (mut s, _r) = raw_sender(&sc, &code).await;
+        let (mut s, mut r) = raw_sender(&sc, &code).await;
         write_frame(
             &mut s,
             &FileMeta {
@@ -269,6 +272,14 @@ async fn cancelled_receiver_removes_its_partial_file() {
                 is_directory: false,
                 entries_count: None,
             },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        let _req: TransferRequest = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
+        write_frame(
+            &mut s,
+            &TransferResponse::Accepted { start_offset: 0 },
             Duration::from_secs(1),
         )
         .await
@@ -319,7 +330,6 @@ async fn lost_receipt_preserves_verified_local_file_and_emits_warning() {
     };
     let server = tokio::spawn(async move {
         let (mut s, mut r) = raw_sender(&sc, &code).await;
-        r.stop(0u32.into()).unwrap();
         write_frame(
             &mut s,
             &FileMeta {
@@ -333,6 +343,15 @@ async fn lost_receipt_preserves_verified_local_file_and_emits_warning() {
         )
         .await
         .unwrap();
+        let _req: TransferRequest = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
+        write_frame(
+            &mut s,
+            &TransferResponse::Accepted { start_offset: 0 },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        r.stop(0u32.into()).unwrap();
         s.write_all(b"abc").await.unwrap();
         s.finish().unwrap();
         let _ = sc.closed().await;
@@ -425,6 +444,8 @@ async fn receipt_validation_rejects_bidi_controls_and_marks() {
         .unwrap();
         s.write_all(b"GET").await.unwrap();
         let _meta: FileMeta = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
+        write_frame(&mut s, &TransferRequest::Full, Duration::from_secs(1)).await.unwrap();
+        let _resp: TransferResponse = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
         let mut buf = vec![0u8; payload.len()];
         r.read_exact(&mut buf).await.unwrap();
         write_frame(
@@ -513,7 +534,7 @@ async fn slowloris_trickling_sender_is_aborted() {
     let total_size = MIN_THROUGHPUT_PER_WINDOW * 2;
 
     let server = tokio::spawn(async move {
-        let (mut s, mut _r) = raw_sender(&sc, &code).await;
+        let (mut s, mut r) = raw_sender(&sc, &code).await;
         write_frame(
             &mut s,
             &FileMeta {
@@ -523,6 +544,14 @@ async fn slowloris_trickling_sender_is_aborted() {
                 is_directory: false,
                 entries_count: None,
             },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        let _req: TransferRequest = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
+        write_frame(
+            &mut s,
+            &TransferResponse::Accepted { start_offset: 0 },
             Duration::from_secs(1),
         )
         .await

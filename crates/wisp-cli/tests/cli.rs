@@ -422,4 +422,141 @@ fn ctrl_c_during_active_directory_transfer_cleans_up_staging_dir() {
     );
 }
 
+#[test]
+fn cli_clean_command_removes_stale_partial_files() {
+    let destination = tempfile::tempdir().unwrap();
+    let part = destination.path().join(".wisp-1234567890abcdef.part");
+    let resume = destination.path().join(".wisp-1234567890abcdef.resume");
+    let keep = destination.path().join("keep.txt");
+
+    std::fs::write(&part, b"part").unwrap();
+    std::fs::write(&resume, b"resume").unwrap();
+    std::fs::write(&keep, b"keep").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_wisp"))
+        .args([
+            "--no-config",
+            "--json",
+            "clean",
+            "--dir",
+            path(destination.path()),
+            "--older-than",
+            "0",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let event: Value = serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
+    assert_eq!(event["event"], "cleaned");
+    assert_eq!(event["count"], 2);
+
+    assert!(!part.exists());
+    assert!(!resume.exists());
+    assert!(keep.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_transfer_resumption_after_sigint() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let file = source.path().join("resumable_cli.bin");
+    let payload: Vec<u8> = (0..(48 * 1024 * 1024)).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&file, &payload).unwrap();
+
+    let sender1 = Process::start(&[
+        "send",
+        path(&file),
+        "--no-discovery",
+        "--bind",
+        "127.0.0.1",
+        "--wait",
+        "30",
+    ]);
+    let ready1 = sender1.event("ready");
+
+    let mut receiver1 = Process::start(&[
+        "recv",
+        ready1["code"].as_str().unwrap(),
+        "--dir",
+        path(destination.path()),
+        "--address",
+        ready1["address"].as_str().unwrap(),
+        "--timeout",
+        "10",
+    ]);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let ev = receiver1.events.recv_timeout(Duration::from_secs(2)).unwrap();
+        if ev["event"] == "progress" {
+            let transferred = ev["transferred"].as_u64().unwrap_or(0);
+            if transferred >= 16 * 1024 * 1024 && transferred < payload.len() as u64 {
+                break;
+            }
+        }
+        assert!(Instant::now() < deadline, "did not reach 16 MiB in time");
+    }
+
+    assert!(Command::new("kill")
+        .args(["-INT", &receiver1.child.id().to_string()])
+        .status()
+        .unwrap()
+        .success());
+
+    let (status, _) = receiver1.finish();
+    assert_eq!(status.code(), Some(130));
+
+    let mut part_found = false;
+    let mut resume_found = false;
+    for entry in std::fs::read_dir(destination.path()).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with(".wisp-") && name.ends_with(".part") {
+            part_found = true;
+        }
+        if name.starts_with(".wisp-") && name.ends_with(".resume") {
+            resume_found = true;
+        }
+    }
+    assert!(part_found, "partial file must exist after SIGINT");
+    assert!(resume_found, "resume ledger must exist after SIGINT");
+
+    let mut sender2 = Process::start(&[
+        "send",
+        path(&file),
+        "--no-discovery",
+        "--bind",
+        "127.0.0.1",
+        "--wait",
+        "30",
+    ]);
+    let ready2 = sender2.event("ready");
+
+    let mut receiver2 = Process::start(&[
+        "recv",
+        ready2["code"].as_str().unwrap(),
+        "--dir",
+        path(destination.path()),
+        "--address",
+        ready2["address"].as_str().unwrap(),
+        "--timeout",
+        "10",
+    ]);
+
+    let resuming_ev = receiver2.event("resuming");
+    assert_eq!(resuming_ev["offset"], 16 * 1024 * 1024);
+
+    let (recv_status, recv_events) = receiver2.finish();
+    let (send_status, _) = sender2.finish();
+
+    assert!(recv_status.success(), "{recv_events:?}");
+    assert!(send_status.success());
+
+    let saved = destination.path().join("resumable_cli.bin");
+    assert_eq!(std::fs::read(&saved).unwrap(), payload);
+}
+
+
 

@@ -3,7 +3,7 @@
 use crate::{
     config::Timeouts,
     discovery, pake,
-    storage::{sanitize, sanitize_relative_path, PendingDirectory, PendingFile},
+    storage::{sanitize, sanitize_relative_path, PendingDirectory, ResumableFile},
     transport, PairingCode,
 };
 use anyhow::{anyhow, bail, Context, Result};
@@ -57,6 +57,10 @@ pub enum Event {
         transferred: u64,
         total: u64,
     },
+    Resuming {
+        offset: u64,
+        total: u64,
+    },
     Verifying,
     AwaitingReceipt,
     Warning {
@@ -93,6 +97,7 @@ pub struct ReceiveOptions {
     pub address: Option<SocketAddr>,
     pub max_size: u64,
     pub timeouts: Timeouts,
+    pub resume: bool,
 }
 impl ReceiveOptions {
     pub fn new(code: PairingCode, directory: PathBuf) -> Self {
@@ -102,6 +107,7 @@ impl ReceiveOptions {
             address: None,
             max_size: MAX_FILE_SIZE,
             timeouts: Timeouts::default(),
+            resume: true,
         }
     }
 }
@@ -151,6 +157,22 @@ struct VerifiedReceipt {
     hash: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     is_directory: bool,
+}
+
+pub const CHECKPOINT_INTERVAL: u64 = 16 * 1024 * 1024; // 16 MiB
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum TransferRequest {
+    Full,
+    Resume { offset: u64 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum TransferResponse {
+    Accepted { start_offset: u64 },
+    Rejected { reason: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -716,16 +738,84 @@ async fn sender_file_protocol(
     events: &EventHandler,
 ) -> Result<TransferReceipt> {
     write_frame(send, &source.meta, timeouts.io()).await?;
+
+    let req: TransferRequest = read_frame(recv, timeouts.io()).await?;
+    let start_offset = match req {
+        TransferRequest::Full => {
+            write_frame(
+                send,
+                &TransferResponse::Accepted { start_offset: 0 },
+                timeouts.io(),
+            )
+            .await?;
+            0u64
+        }
+        TransferRequest::Resume { offset } => {
+            if offset > source.meta.size {
+                let reason = format!(
+                    "resume offset {offset} exceeds source size {}",
+                    source.meta.size
+                );
+                write_frame(
+                    send,
+                    &TransferResponse::Rejected {
+                        reason: reason.clone(),
+                    },
+                    timeouts.io(),
+                )
+                .await?;
+                bail!("rejected invalid resume request: {reason}");
+            }
+            if offset % CHECKPOINT_INTERVAL != 0 && offset != 0 {
+                let reason = format!(
+                    "resume offset {offset} is not aligned to checkpoint boundary {CHECKPOINT_INTERVAL}"
+                );
+                write_frame(
+                    send,
+                    &TransferResponse::Rejected {
+                        reason: reason.clone(),
+                    },
+                    timeouts.io(),
+                )
+                .await?;
+                bail!("rejected misaligned resume request: {reason}");
+            }
+            source
+                .file
+                .seek(std::io::SeekFrom::Start(offset))
+                .await
+                .context("seeking source file for resume")?;
+            write_frame(
+                send,
+                &TransferResponse::Accepted {
+                    start_offset: offset,
+                },
+                timeouts.io(),
+            )
+            .await?;
+            offset
+        }
+    };
+
+    if start_offset > 0 {
+        events(Event::Resuming {
+            offset: start_offset,
+            total: source.meta.size,
+        });
+    }
+
     let mut progress = Progress::new(source.meta.size, events);
     let mut buf = vec![0; CHUNK];
-    let mut sent = 0;
+    let mut sent = start_offset;
+    progress.update(sent);
     let mut hash = blake3::Hasher::new();
     let mut window_start = Instant::now();
-    let mut window_start_sent = 0u64;
-    loop {
+    let mut window_start_sent = start_offset;
+    while sent < source.meta.size {
+        let to_read = ((source.meta.size - sent).min(CHUNK as u64)) as usize;
         let n = source
             .file
-            .read(&mut buf)
+            .read(&mut buf[..to_read])
             .await
             .context("reading source file")?;
         if n == 0 {
@@ -734,7 +824,9 @@ async fn sender_file_protocol(
         if sent + n as u64 > source.meta.size {
             bail!("source file grew during transfer; receiver must retry");
         }
-        hash.update(&buf[..n]);
+        if start_offset == 0 {
+            hash.update(&buf[..n]);
+        }
         tokio::time::timeout(timeouts.io(), send.write_all(&buf[..n]))
             .await
             .context("sending stalled")??;
@@ -753,7 +845,10 @@ async fn sender_file_protocol(
             window_start_sent = sent;
         }
     }
-    if sent != source.meta.size || hash.finalize().to_hex().as_str() != source.meta.hash {
+    if sent != source.meta.size {
+        bail!("source file changed during transfer; receiver must retry");
+    }
+    if start_offset == 0 && hash.finalize().to_hex().as_str() != source.meta.hash {
         bail!("source file changed during transfer; receiver must retry");
     }
     send.finish()?;
@@ -1017,12 +1112,52 @@ async fn receiver_file_protocol(
     let directory = tokio::fs::canonicalize(&options.directory)
         .await
         .context("resolving destination directory")?;
-    let mut pending = PendingFile::create(&directory)?;
-    let mut received = 0;
-    let mut hash = blake3::Hasher::new();
+    let (mut resumable, resume_offset) = ResumableFile::open_or_resume(
+        &directory,
+        &meta.name,
+        meta.size,
+        &meta.hash,
+        options.resume,
+    )?;
+
+    if resume_offset > 0 {
+        events(Event::Resuming {
+            offset: resume_offset,
+            total: meta.size,
+        });
+        write_frame(
+            send,
+            &TransferRequest::Resume {
+                offset: resume_offset,
+            },
+            options.timeouts.io(),
+        )
+        .await?;
+    } else {
+        write_frame(send, &TransferRequest::Full, options.timeouts.io()).await?;
+    }
+
+    let resp: TransferResponse = read_frame(recv, options.timeouts.io()).await?;
+    let start_offset = match resp {
+        TransferResponse::Accepted { start_offset } => {
+            if start_offset != resume_offset {
+                bail!(
+                    "sender offset mismatch: requested {resume_offset}, sender accepted {start_offset}"
+                );
+            }
+            start_offset
+        }
+        TransferResponse::Rejected { reason } => {
+            bail!("sender rejected transfer request: {reason}");
+        }
+    };
+
+    let mut received = start_offset;
+    let mut last_checkpoint = start_offset;
     let mut progress = Progress::new(meta.size, events);
+    progress.update(received);
     let mut window_start = Instant::now();
-    let mut window_start_received = 0u64;
+    let mut window_start_received = start_offset;
     while received < meta.size {
         let limit = ((meta.size - received).min(CHUNK as u64)) as usize;
         let chunk = tokio::time::timeout(options.timeouts.io(), recv.read_chunk(limit, true))
@@ -1032,10 +1167,16 @@ async fn receiver_file_protocol(
         if chunk.bytes.is_empty() {
             continue;
         }
-        hash.update(&chunk.bytes);
-        pending.write(&chunk.bytes)?;
+        resumable.write(&chunk.bytes)?;
         received += chunk.bytes.len() as u64;
         progress.update(received);
+
+        let aligned_checkpoint = (received / CHECKPOINT_INTERVAL) * CHECKPOINT_INTERVAL;
+        if aligned_checkpoint > last_checkpoint && received < meta.size {
+            resumable.checkpoint(aligned_checkpoint)?;
+            last_checkpoint = aligned_checkpoint;
+            progress.force_update(received);
+        }
 
         let elapsed = window_start.elapsed();
         if elapsed >= options.timeouts.io() {
@@ -1053,11 +1194,9 @@ async fn receiver_file_protocol(
         .await
         .context("sender supplied extra data or did not finish")?;
     events(Event::Verifying);
-    if hash.finalize().to_hex().as_str() != meta.hash {
-        bail!("file integrity check failed; temporary file removed");
-    }
-    let name_for_commit = meta.name.clone();
-    let published = tokio::task::spawn_blocking(move || pending.commit(&name_for_commit))
+
+    let hash_for_commit = meta.hash.clone();
+    let published = tokio::task::spawn_blocking(move || resumable.commit(&hash_for_commit))
         .await
         .context("file publication task panicked")??;
     if let Some(warning) = published.sync_warning {
@@ -1394,6 +1533,13 @@ impl<'a> Progress<'a> {
             });
             self.last = Instant::now();
         }
+    }
+    fn force_update(&mut self, transferred: u64) {
+        (self.events)(Event::Progress {
+            transferred,
+            total: self.total,
+        });
+        self.last = Instant::now();
     }
 }
 

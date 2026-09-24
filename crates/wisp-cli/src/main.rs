@@ -74,6 +74,18 @@ enum Command {
         /// Maximum accepted bytes (also accepts KiB, MiB, GiB, TiB); default 1 TiB.
         #[arg(long, default_value = "1TiB", value_parser = parse_size)]
         max_size: u64,
+        /// Disable resumption and restart transfer from byte 0.
+        #[arg(long)]
+        no_resume: bool,
+    },
+    /// Clean up abandoned partial downloads and temporary files.
+    Clean {
+        /// Destination directory to clean; defaults to configuration or the current directory.
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+        /// Remove partial files older than this many seconds (default 86400 = 24h).
+        #[arg(long, default_value_t = 86400)]
+        older_than: u64,
     },
 }
 
@@ -215,6 +227,13 @@ impl Output {
                 self.progress.set_length(total);
                 self.progress.set_position(transferred);
             }
+            Event::Resuming { offset, total } => {
+                self.progress.set_length(total);
+                self.progress.set_position(offset);
+                if !self.quiet {
+                    self.status(&format!("Resuming transfer from byte {offset}/{total}…"));
+                }
+            }
             Event::Warning { message } => {
                 self.status(&format!("Warning: {message}"));
             }
@@ -231,6 +250,27 @@ impl Output {
                 self.status(&message);
             }
             _ => {}
+        }
+    }
+    fn cleaned(&self, dir: &std::path::Path, count: usize) {
+        if self.json {
+            self.line(serde_json::json!({
+                "event": "cleaned",
+                "directory": dir.display().to_string(),
+                "count": count,
+            }));
+        } else {
+            self.stdout(|out| {
+                if count == 0 {
+                    writeln!(out, "No stale partial files found in {}", dir.display())
+                } else {
+                    writeln!(
+                        out,
+                        "Cleaned {count} stale partial file(s) in {}",
+                        dir.display()
+                    )
+                }
+            });
         }
     }
     fn complete(&self, receipt: TransferReceipt) {
@@ -278,7 +318,7 @@ impl Output {
     }
 }
 
-async fn run(cli: Cli, events: EventHandler) -> Result<TransferReceipt> {
+async fn run(cli: Cli, output: &Output, events: EventHandler) -> Result<Option<TransferReceipt>> {
     let mut config = if cli.no_config {
         Config::default()
     } else {
@@ -312,19 +352,32 @@ async fn run(cli: Cli, events: EventHandler) -> Result<TransferReceipt> {
             if let Some(wait) = wait {
                 options.timeouts.wait = wait;
             }
-            wisp_core::send_file(options, events).await
+            let receipt = wisp_core::send_file(options, events).await?;
+            Ok(Some(receipt))
         }
         Command::Recv {
             code,
             dir,
             address,
             max_size,
+            no_resume,
         } => {
             let mut options = ReceiveOptions::new(code, config.download_dir(dir)?);
             options.address = address;
             options.max_size = max_size;
             options.timeouts = config.timeouts;
-            wisp_core::receive_file(options, events).await
+            options.resume = !no_resume;
+            let receipt = wisp_core::receive_file(options, events).await?;
+            Ok(Some(receipt))
+        }
+        Command::Clean { dir, older_than } => {
+            let target_dir = config.download_dir(dir)?;
+            let cleaned = wisp_core::clean_stale_partial_files(
+                &target_dir,
+                std::time::Duration::from_secs(older_than),
+            )?;
+            output.cleaned(&target_dir, cleaned);
+            Ok(None)
         }
     }
 }
@@ -368,6 +421,7 @@ async fn main() -> ExitCode {
     };
     // The losing transfer future is dropped before reporting cancellation. RAII
     // closes sockets and removes its partial file; process::exit would skip this.
+    let output_for_run = output.clone();
     let result = tokio::select! {
         biased;
         signal = interrupted() => match signal {
@@ -375,11 +429,19 @@ async fn main() -> ExitCode {
             Err(err) => Err((1, format!("{err:#}"))),
         },
         _ = output.failed.notified() => Err((1, output.output_error().expect("notified output error"))),
-        result = run(cli, events) => result.map_err(|err| (1, format!("{err:#}"))),
+        result = run(cli, &output_for_run, events) => result.map_err(|err| (1, format!("{err:#}"))),
     };
     match result {
-        Ok(receipt) => {
+        Ok(Some(receipt)) => {
             output.complete(receipt);
+            if let Some(error) = output.output_error() {
+                output.error(&error, 1);
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Ok(None) => {
             if let Some(error) = output.output_error() {
                 output.error(&error, 1);
                 ExitCode::from(1)

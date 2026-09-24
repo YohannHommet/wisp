@@ -11,7 +11,7 @@ pub mod transfer;
 mod transport;
 
 pub use code::PairingCode;
-pub use storage::sanitize;
+pub use storage::{clean_stale_partial_files, sanitize};
 pub use transfer::{
     receive_file, send_file, Event, EventHandler, ReceiveOptions, SendOptions, TransferReceipt,
 };

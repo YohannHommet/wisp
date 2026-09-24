@@ -29,3 +29,6 @@ socket2 = { workspace = true }
 dirs = { workspace = true }
 toml = { workspace = true }
 tempfile = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

@@ -229,6 +229,11 @@ async fn absent_or_forged_receipt_never_confirms_delivery() {
         .await
         .unwrap();
         s.write_all(b"GET").await.unwrap();
+        let _meta: FileMeta = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
+        write_frame(&mut s, &TransferRequest::Full, Duration::from_secs(1))
+            .await
+            .unwrap();
+        let _resp: TransferResponse = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
         let _ = r.read_to_end(MAX_FRAME + 100).await.unwrap();
         if forge {
             write_frame(
@@ -259,7 +264,7 @@ async fn cancelled_receiver_removes_its_partial_file() {
         ..ReceiveOptions::new(code.clone(), destination.path().into())
     };
     let server = tokio::spawn(async move {
-        let (mut s, _r) = raw_sender(&sc, &code).await;
+        let (mut s, mut r) = raw_sender(&sc, &code).await;
         write_frame(
             &mut s,
             &FileMeta {
@@ -269,6 +274,14 @@ async fn cancelled_receiver_removes_its_partial_file() {
                 is_directory: false,
                 entries_count: None,
             },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        let _req: TransferRequest = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
+        write_frame(
+            &mut s,
+            &TransferResponse::Accepted { start_offset: 0 },
             Duration::from_secs(1),
         )
         .await
@@ -319,7 +332,6 @@ async fn lost_receipt_preserves_verified_local_file_and_emits_warning() {
     };
     let server = tokio::spawn(async move {
         let (mut s, mut r) = raw_sender(&sc, &code).await;
-        r.stop(0u32.into()).unwrap();
         write_frame(
             &mut s,
             &FileMeta {
@@ -333,6 +345,15 @@ async fn lost_receipt_preserves_verified_local_file_and_emits_warning() {
         )
         .await
         .unwrap();
+        let _req: TransferRequest = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
+        write_frame(
+            &mut s,
+            &TransferResponse::Accepted { start_offset: 0 },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        r.stop(0u32.into()).unwrap();
         s.write_all(b"abc").await.unwrap();
         s.finish().unwrap();
         let _ = sc.closed().await;
@@ -425,6 +446,10 @@ async fn receipt_validation_rejects_bidi_controls_and_marks() {
         .unwrap();
         s.write_all(b"GET").await.unwrap();
         let _meta: FileMeta = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
+        write_frame(&mut s, &TransferRequest::Full, Duration::from_secs(1))
+            .await
+            .unwrap();
+        let _resp: TransferResponse = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
         let mut buf = vec![0u8; payload.len()];
         r.read_exact(&mut buf).await.unwrap();
         write_frame(
@@ -513,7 +538,7 @@ async fn slowloris_trickling_sender_is_aborted() {
     let total_size = MIN_THROUGHPUT_PER_WINDOW * 2;
 
     let server = tokio::spawn(async move {
-        let (mut s, mut _r) = raw_sender(&sc, &code).await;
+        let (mut s, mut r) = raw_sender(&sc, &code).await;
         write_frame(
             &mut s,
             &FileMeta {
@@ -523,6 +548,14 @@ async fn slowloris_trickling_sender_is_aborted() {
                 is_directory: false,
                 entries_count: None,
             },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        let _req: TransferRequest = read_frame(&mut r, Duration::from_secs(1)).await.unwrap();
+        write_frame(
+            &mut s,
+            &TransferResponse::Accepted { start_offset: 0 },
             Duration::from_secs(1),
         )
         .await
@@ -899,9 +932,7 @@ async fn directory_non_monotonic_path_rejected_and_cleaned_up() {
         // 1st entry: 'b'
         write_frame(
             &mut s,
-            &DirFrame::Dir {
-                path: "b".into(),
-            },
+            &DirFrame::Dir { path: "b".into() },
             Duration::from_secs(1),
         )
         .await
@@ -910,9 +941,7 @@ async fn directory_non_monotonic_path_rejected_and_cleaned_up() {
         // 2nd entry: 'a' (non-monotonic: 'a' < 'b')
         write_frame(
             &mut s,
-            &DirFrame::Dir {
-                path: "a".into(),
-            },
+            &DirFrame::Dir { path: "a".into() },
             Duration::from_secs(1),
         )
         .await
@@ -957,8 +986,14 @@ fn single_file_metadata_and_receipt_wire_compatibility_with_v0_2() {
         entries_count: None,
     };
     let json = serde_json::to_string(&file_meta).unwrap();
-    assert!(!json.contains("is_directory"), "v0.2 single-file wire json must not contain is_directory");
-    assert!(!json.contains("entries_count"), "v0.2 single-file wire json must not contain entries_count");
+    assert!(
+        !json.contains("is_directory"),
+        "v0.2 single-file wire json must not contain is_directory"
+    );
+    assert!(
+        !json.contains("entries_count"),
+        "v0.2 single-file wire json must not contain entries_count"
+    );
 
     let receipt = VerifiedReceipt {
         name: "test.txt".into(),
@@ -967,7 +1002,10 @@ fn single_file_metadata_and_receipt_wire_compatibility_with_v0_2() {
         is_directory: false,
     };
     let receipt_json = serde_json::to_string(&receipt).unwrap();
-    assert!(!receipt_json.contains("is_directory"), "v0.2 single-file receipt must not contain is_directory");
+    assert!(
+        !receipt_json.contains("is_directory"),
+        "v0.2 single-file receipt must not contain is_directory"
+    );
 }
 
 #[tokio::test]
@@ -1188,7 +1226,49 @@ async fn cancelled_directory_receiver_removes_its_staging_dir() {
     let _ = server.await;
 }
 
+#[tokio::test]
+async fn frame_reading_supports_deep_path_headers() {
+    let (sc, cc) = connections().await;
 
+    // Construct a valid deep path just under 2048 bytes (e.g. 25 segments of 60 chars = ~1524 chars)
+    let segment = "a".repeat(60);
+    let deep_path = (0..25)
+        .map(|_| segment.as_str())
+        .collect::<Vec<_>>()
+        .join("/");
+    assert!(deep_path.len() > 1500 && deep_path.len() <= 2048);
 
+    let frame = DirFrame::FileHeader {
+        path: deep_path.clone(),
+        size: 42,
+        executable: false,
+    };
 
+    let (mut client_send, _client_recv) = cc.open_bi().await.unwrap();
 
+    let server = tokio::spawn(async move {
+        let (_s, mut r) = sc.accept_bi().await.unwrap();
+        read_frame::<DirFrame>(&mut r, Duration::from_secs(2))
+            .await
+            .unwrap()
+    });
+
+    write_frame(&mut client_send, &frame, Duration::from_secs(2))
+        .await
+        .unwrap();
+
+    let read_result = server.await.unwrap();
+
+    match read_result {
+        DirFrame::FileHeader {
+            path,
+            size,
+            executable,
+        } => {
+            assert_eq!(path, deep_path);
+            assert_eq!(size, 42);
+            assert!(!executable);
+        }
+        _ => panic!("unexpected frame type"),
+    }
+}

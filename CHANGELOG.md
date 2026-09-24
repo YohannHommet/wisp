@@ -1,6 +1,14 @@
 # Changelog
 
-## 0.2.0 — unreleased
+## 0.3.0 — unreleased
+
+### Major Features
+- **In-flight Directory Streaming**: Stream entire directory trees on-the-fly (`wisp send <dir>` / `wisp recv <code>`) without intermediate `.tar`/`.zip` archives. Uses domain-separated BLAKE3 tree hashing (`WISP_DIR_V1`), preserves Unix executable bits, rejects Zip Slip / traversal, and enforces monotonic lexical order.
+- **Transfer Resumption & Checkpointing**: Large file transfers automatically resume from verified 16 MiB checkpoints after network disconnects or process restarts, using atomic `.resume` ledger sidecars. Resumption can be explicitly bypassed using `wisp recv --no-resume`.
+- **Partial Staging Garbage Collection**: Added `wisp clean` command to prune abandoned `.wisp-*.part` staging files and directories older than `--older-than` (default 24h).
+- **Architecture Hardening**: Expanded protocol message framing cap from 4 KiB to 64 KiB, added zero-allocation stack buffers for frame headers, enforced 2048-byte path limits, added non-hardlink filesystem fallback on FAT32/exFAT, and ensured publication atomicity.
+
+## 0.2.0
 
 Wisp returns to its original scope: a CLI for sending a regular file between two computers on the same local IPv4 network.
 

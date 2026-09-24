@@ -10,7 +10,7 @@ Send a file between two computers on the same network. No account, browser, clou
 
 > 🌐 **Interactive Demo & Architecture Explorer**: Test real-time transfer scenarios and view the authenticated QUIC protocol flow at **[yohannhommet.github.io/wisp](https://yohannhommet.github.io/wisp/)**.
 
-Wisp 0.2 is a terminal app for one file at a time. Install it on **both computers**, use the same Wi-Fi or Ethernet network, and keep both commands open until they finish. To send a folder or several files, create an archive first.
+Wisp is a zero-configuration terminal app to transfer files and directory trees between computers on the same network. Install it on **both computers**, use the same Wi-Fi or Ethernet network, and keep both commands open until they finish. Entire directories are streamed in-flight without intermediate archives, and interrupted transfers resume automatically.
 
 ## Installation
 
@@ -75,25 +75,29 @@ Replace `CODE` below with the fresh code from the sender. Quote paths containing
 
 ```sh
 wisp send photo.jpg
+wisp send ./my-project/
 wisp send report.pdf --name 'Quarterly Report.pdf'
 wisp recv CODE --dir ~/Downloads
 wisp recv CODE --max-size 500MiB
+wisp recv CODE --no-resume
+wisp clean --older-than 86400
 ```
 
 A code contains a public eight-digit session identifier plus **four secret words**. It is single-use and, by default, expires after five minutes of waiting. Share it privately with the intended receiver. Authentication failure ends that session; run `send` again rather than reusing the code.
 
-Received files never overwrite an existing destination. A collision saves as `report (1).pdf`, then `report (2).pdf`. Incomplete or invalid transfers are removed on ordinary errors and handled cancellation. Wisp saves regular files only and does not resume interrupted transfers.
+Received files and directories never overwrite an existing destination. A collision saves as `report (1).pdf` or `my-project (1)`. Large transfers periodically checkpoint to atomic `.resume` sidecars and resume automatically from the last verified 16 MiB boundary if interrupted. Abandoned partial downloads can be pruned with `wisp clean`.
 
 ## CLI usage
 
-The command has two actions:
+The command has three main actions:
 
 ```text
-wisp send FILE [OPTIONS]
+wisp send PATH [OPTIONS]
 wisp recv CODE [OPTIONS]
+wisp clean [OPTIONS]
 ```
 
-Start with `wisp send FILE`. It prints the complete one-use code and a ready-to-paste `wisp recv ...` command. On the other computer, paste that command and optionally add `--dir DIRECTORY`.
+Start with `wisp send PATH` (file or folder). It prints the complete one-use code and a ready-to-paste `wisp recv ...` command. On the other computer, paste that command and optionally add `--dir DIRECTORY`.
 
 Use these options only when you need them:
 
@@ -101,11 +105,13 @@ Use these options only when you need them:
 |---|---|
 | Choose the destination directory | `recv --dir DIRECTORY` |
 | Bypass automatic discovery | `recv --address IPv4:PORT` |
+| Disable transfer resumption | `recv --no-resume` |
+| Clean stale partial staging files | `clean --older-than SECONDS` |
 | Choose the sender's network interface | `send --bind IPv4` |
 | Avoid multicast discovery | `send --no-discovery` (also requires `recv --address`) |
 | Keep the code valid longer | `send --wait SECONDS` |
-| Reject files above a limit | `recv --max-size 500MiB` |
-| Send under another filename | `send --name NAME` |
+| Reject transfers above a limit | `recv --max-size 500MiB` |
+| Send under another name | `send --name NAME` |
 | Ignore a broken user config | `--no-config` |
 | Script the transfer | `--json` |
 

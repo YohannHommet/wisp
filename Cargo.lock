@@ -1869,7 +1869,7 @@ dependencies = [
 
 [[package]]
 name = "wisp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1883,7 +1883,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "blake3",

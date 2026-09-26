@@ -5274,19 +5274,19 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <text data-detail="context" x="910" y="236" class="t-muted" font-size="9" text-anchor="middle">TLS exporter, 1 attempt max</text>
         </g>
 
-        <g id="node-wire" data-node-id="wire" data-node-label="WSP/2 transfer stream" tabindex="0" role="button" aria-label="Focus WSP/2 transfer stream, watchdog, blake3, receipt, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="watchdog, blake3, receipt" data-node-context="Architecture component">
-          <title>WSP/2 transfer stream · watchdog, blake3, receipt · Architecture component</title>
+        <g id="node-wire" data-node-id="wire" data-node-label="WSP transfer stream" tabindex="0" role="button" aria-label="Focus WSP transfer stream, DirFrame, 16MiB resume, blake3, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="DirFrame, 16MiB resume, blake3" data-node-context="Architecture component">
+          <title>WSP transfer stream · DirFrame, 16MiB resume, blake3 · Architecture component</title>
           <rect x="820" y="320" width="180" height="64" rx="6" class="c-mask"/>
           <rect x="820" y="320" width="180" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(826 326) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="910" y="350" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">WSP/2 transfer stream</text>
-        <text data-detail="context" x="910" y="366" class="t-muted" font-size="9" text-anchor="middle">watchdog, blake3, receipt</text>
+          <text data-node-label="" data-detail-anchor="" x="910" y="350" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">WSP transfer stream</text>
+        <text data-detail="context" x="910" y="366" class="t-muted" font-size="9" text-anchor="middle">DirFrame, 16MiB resume, blake3</text>
         </g>
 
-        <g id="node-storage" data-node-id="storage" data-node-label="Verified local storage" tabindex="0" role="button" aria-label="Focus Verified local storage, no-clobber, bidi clean, fsync, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="no-clobber, bidi clean, fsync" data-node-context="Architecture component">
-          <title>Verified local storage · no-clobber, bidi clean, fsync · Architecture component</title>
+        <g id="node-storage" data-node-id="storage" data-node-label="Verified local storage" tabindex="0" role="button" aria-label="Focus Verified local storage, no-clobber, atomic publish, GC, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="no-clobber, atomic publish, GC" data-node-context="Architecture component">
+          <title>Verified local storage · no-clobber, atomic publish, GC · Architecture component</title>
           <rect x="820" y="475" width="180" height="64" rx="6" class="c-mask"/>
           <rect x="820" y="475" width="180" height="64" rx="6" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(826 481) scale(0.6875)">
@@ -5294,7 +5294,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="910" y="505" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Verified local storage</text>
-        <text data-detail="context" x="910" y="521" class="t-muted" font-size="9" text-anchor="middle">no-clobber, bidi clean, fsync</text>
+        <text data-detail="context" x="910" y="521" class="t-muted" font-size="9" text-anchor="middle">no-clobber, atomic publish, GC</text>
         </g>
 
         <g id="node-receiver" data-node-id="receiver" data-node-label="Receiver computer" tabindex="0" role="button" aria-label="Focus Receiver computer, wisp recv &lt;code&gt;, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="wisp recv &lt;code&gt;" data-node-context="Architecture component">
@@ -5617,8 +5617,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         </div>
         <ul>
           <li>&bull; CLI-only: no daemon, no cloud relay, no GUI attack surface</li>
-          <li>&bull; Stream-only QUIC TLS 1.3 with probe tolerance (Retry tokens)</li>
-          <li>&bull; Windowed Slowloris watchdog &amp; graceful socket buffer fallback</li>
+          <li>&bull; In-flight directory streaming (DirFrame) &amp; 16 MiB checkpoint resumption</li>
+          <li>&bull; Stream-only QUIC TLS 1.3 with probe tolerance &amp; Slowloris watchdog</li>
         </ul>
       </div>
 
@@ -5629,8 +5629,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         </div>
         <ul>
           <li>&bull; Channel-bound SPAKE2 with single-attempt anti-bruteforce</li>
-          <li>&bull; Full BLAKE3 checksum verification before file publishing</li>
-          <li>&bull; Atomic temp persistence, No-Clobber collision &amp; Unicode Bidi sanitization</li>
+          <li>&bull; BLAKE3 tree hash (WISP_DIR_V1) &amp; full payload disk verification</li>
+          <li>&bull; Atomic temp persistence, No-Clobber collision &amp; wisp clean GC</li>
         </ul>
       </div>
 
@@ -5641,8 +5641,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         </div>
         <ul>
           <li>&bull; Rust #![forbid(unsafe_code)] workspace with zero clippy warnings</li>
-          <li>&bull; 7 automated E2E security scenarios: make demo</li>
-          <li>&bull; Interactive dual-terminal TMUX split-screen: make demo-tmux</li>
+          <li>&bull; 74 unit, integration, chaos, and CLI E2E tests: cargo test</li>
+          <li>&bull; Architecture Decision Records documented in docs/adr/</li>
         </ul>
       </div>
     </div>

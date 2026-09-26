@@ -23,22 +23,31 @@ Dropping a transfer future closes its endpoint and withdraws discovery. The CLI 
 
 Source reads and hashing use Tokio file I/O on the same open handle. Destination writes are buffered synchronous writes, bounded by received chunks, so temporary-file ownership and cleanup are deterministic across cancellation. Flush, file sync and publication are synchronous; slow local filesystems can delay cancellation during those operations. No detached task is allowed to publish a file after the transfer future has been cancelled.
 
-## WSP/2 wire sequence
+## WSP wire sequence
 
 1. QUIC handshake with ALPN `wsp/2`.
-2. SPAKE2 and mutual key confirmation bound to the TLS exporter.
-3. Receiver sends exactly `GET`, leaving its send stream open for the receipt.
-4. Sender writes a big-endian u32 frame length, JSON `{name,size,hash}`, exactly the prepared bytes, then stream FIN.
-5. Receiver validates metadata, size, FIN and checksum, then syncs and publishes without overwriting.
-6. Receiver writes a length-prefixed JSON `{name,size,hash}` receipt, using the actual collision-resolved name, then FIN.
-7. Sender validates the receipt and its FIN. Receiver waits for transport acknowledgement of its receipt; connections then close.
+2. SPAKE2 mutual key confirmation bound to the TLS exporter.
+3. Receiver sends `GET` to initiate the session stream.
+4. Sender writes big-endian u32 length-prefixed `FileMeta`.
+5. Negotiation & streaming:
+   - **Single-file**: Receiver sends `TransferRequest` (`Full` or `Resume { offset }`), sender responds with `TransferResponse` (`Accepted` or `Rejected`), and sender streams chunks from `start_offset`.
+   - **Directory**: Sender streams typed `DirFrame` frames (`Dir`, `FileHeader`, chunk payload, `FileEnd`, `EndDir`) with domain-separated BLAKE3 tree hashing (`WISP_DIR_V1`).
+6. Receiver validates metadata, size, FIN and BLAKE3 checksums, then syncs and atomically publishes without overwriting.
+7. Receiver writes a length-prefixed `VerifiedReceipt`, then FIN.
+8. Sender validates receipt and FIN. Receiver waits for transport acknowledgement; connections close cleanly.
 
 Every network stage is bounded. The one-attempt policy is deliberate: automatic retries with the same short password would enlarge the online guessing budget. Retry at the user level creates a new session and code.
 
 If a file is saved but acknowledgement is lost, local success and remote uncertainty are both represented honestly. A distributed protocol cannot eliminate every ambiguity caused by disconnection.
 
+## Architecture Decision Records (ADRs)
+
+Detailed architectural choices, protocol specifications, and storage durability guarantees are documented in [`docs/adr/`](adr/README.md):
+- [ADR-0001: In-Flight Directory Streaming Architecture](adr/0001-in-flight-directory-streaming.md)
+- [ADR-0002: Transfer Resumption and Periodic Checkpointing](adr/0002-transfer-resumption-and-checkpointing.md)
+
 ## Scope decisions
 
-IPv4 LAN only; one regular file per invocation. `--bind` selects an interface and `--address` bypasses multicast discovery. No automatic interface fanout, UDP hole punching, internet fallback, persistence, queues, folder traversal, resumability or background receiving. A future interface must consume this same session API and demonstrate real interoperability before joining the supported workspace.
+IPv4 LAN only; transfers one file or one directory tree per invocation. `--bind` selects an interface and `--address` bypasses multicast discovery. Single-file transfers support periodic 16 MiB disk checkpointing for seamless resumption upon network reconnection. No automatic interface fanout, UDP hole punching, internet relay fallback, background daemon receiving, or persistent queues.
 
-Tests cover the public API, raw hostile peers, actual CLI subprocesses, path collisions and cancellation. Discovery testing is explicitly selected on a multicast-capable network. Release checks run the portable suite on Linux, macOS and Windows and native release targets before drafting artifacts.
+Tests cover the public API, raw hostile peers, actual CLI subprocesses, directory tree integrity, path collisions, and cancellation. Discovery testing is explicitly selected on a multicast-capable network. Release checks run the portable suite on Linux, macOS and Windows and native release targets before drafting artifacts.

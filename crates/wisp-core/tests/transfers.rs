@@ -839,3 +839,103 @@ async fn clean_stale_partial_files_removes_old_ledger_and_part_files() {
     assert!(!resume_file.exists());
     assert!(normal_file.exists());
 }
+
+#[tokio::test]
+async fn typo_retry_allows_legitimate_receiver_to_succeed() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let path = source.path().join("retry_test.txt");
+    std::fs::write(&path, b"wisp dos mitigation test content").unwrap();
+
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let warnings_clone = warnings.clone();
+    let handler: EventHandler = Arc::new(move |event| {
+        if let Event::Warning { message } = event {
+            warnings_clone.lock().unwrap().push(message);
+        }
+    });
+
+    let (sender, code, address) = start(&path, handler).await;
+
+    // First attempt: matching locator, but typo in secret words
+    let mut words: Vec<_> = code.expose().split('-').collect();
+    words[4] = if words[4] == "amber" {
+        "tiger"
+    } else {
+        "amber"
+    };
+    let typo_code: PairingCode = words.join("-").parse().unwrap();
+
+    let dest1 = tempfile::tempdir().unwrap();
+    let first_err = receive_file(receiver(typo_code, address, dest1.path()), quiet())
+        .await
+        .unwrap_err();
+    assert!(format!("{first_err:#}").contains("authentication failed"));
+
+    // Second attempt: correct code within retry budget
+    let receipt = receive_file(receiver(code.clone(), address, destination.path()), quiet())
+        .await
+        .unwrap();
+
+    let sent = sender.await.unwrap().unwrap();
+    assert_eq!(sent.hash, receipt.hash);
+    assert_eq!(
+        std::fs::read(receipt.saved_to.unwrap()).unwrap(),
+        b"wisp dos mitigation test content"
+    );
+
+    // Verify warning was logged for the failed attempt
+    let recorded_warnings = warnings.lock().unwrap();
+    assert!(recorded_warnings
+        .iter()
+        .any(|w| w.contains("attempt 1/3 failed")));
+}
+
+#[tokio::test]
+async fn auth_budget_exhaustion_burns_code_after_three_attempts() {
+    let source = tempfile::tempdir().unwrap();
+    let path = source.path().join("burn_test.txt");
+    std::fs::write(&path, b"burn code content").unwrap();
+
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let warnings_clone = warnings.clone();
+    let handler: EventHandler = Arc::new(move |event| {
+        if let Event::Warning { message } = event {
+            warnings_clone.lock().unwrap().push(message);
+        }
+    });
+
+    let (sender, code, address) = start(&path, handler).await;
+
+    let mut words: Vec<_> = code.expose().split('-').collect();
+    words[4] = if words[4] == "amber" {
+        "tiger"
+    } else {
+        "amber"
+    };
+    let wrong_code: PairingCode = words.join("-").parse().unwrap();
+
+    // 3 failed attempts
+    for _ in 0..3 {
+        let dest = tempfile::tempdir().unwrap();
+        let _ = receive_file(receiver(wrong_code.clone(), address, dest.path()), quiet()).await;
+    }
+
+    // Sender should exit with burned code error
+    let sender_err = sender.await.unwrap().unwrap_err();
+    assert!(
+        format!("{sender_err:#}").contains("pairing code burned")
+            || format!("{sender_err:#}").contains("exceeded maximum pairing attempts")
+    );
+
+    let recorded_warnings = warnings.lock().unwrap();
+    assert!(recorded_warnings
+        .iter()
+        .any(|w| w.contains("attempt 1/3 failed")));
+    assert!(recorded_warnings
+        .iter()
+        .any(|w| w.contains("attempt 2/3 failed")));
+    assert!(recorded_warnings
+        .iter()
+        .any(|w| w.contains("attempt 3/3 failed")));
+}

@@ -208,16 +208,15 @@ async fn absent_or_forged_receipt_never_confirms_delivery() {
         let sender = tokio::spawn(async move {
             let (mut s, mut r) = sc.accept_bi().await.unwrap();
             let mut source = PreparedSource::File(prepared);
-            sender_protocol(
-                &code,
-                &mut source,
+            pake::sender_handshake(
+                code.expose(),
                 &mut s,
                 &mut r,
                 &channel_binding(&sc).unwrap(),
-                &limits(),
-                &silent(),
             )
             .await
+            .unwrap();
+            sender_protocol(&mut source, &mut s, &mut r, &limits(), &silent()).await
         });
         let (mut s, mut r) = cc.open_bi().await.unwrap();
         pake::receiver_handshake(
@@ -424,16 +423,15 @@ async fn receipt_validation_rejects_bidi_controls_and_marks() {
         let sender = tokio::spawn(async move {
             let (mut s, mut r) = sc.accept_bi().await.unwrap();
             let mut src = PreparedSource::File(source);
-            sender_protocol(
-                &sender_code,
-                &mut src,
+            pake::sender_handshake(
+                sender_code.expose(),
                 &mut s,
                 &mut r,
                 &channel_binding(&sc).unwrap(),
-                &limits(),
-                &silent(),
             )
             .await
+            .unwrap();
+            sender_protocol(&mut src, &mut s, &mut r, &limits(), &silent()).await
         });
         let (mut s, mut r) = cc.open_bi().await.unwrap();
         pake::receiver_handshake(
@@ -1271,4 +1269,187 @@ async fn frame_reading_supports_deep_path_headers() {
         }
         _ => panic!("unexpected frame type"),
     }
+}
+
+#[tokio::test]
+async fn handshake_rejects_unauthorized_probe_as_invalid_intent() {
+    let (sc, cc) = connections().await;
+    let code = PairingCode::generate();
+    let server_binding = channel_binding(&sc).unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut s, mut r) = sc.accept_bi().await.unwrap();
+        pake::sender_handshake(code.expose(), &mut s, &mut r, &server_binding).await
+    });
+
+    let (mut client_send, mut client_recv) = cc.open_bi().await.unwrap();
+    // Probe sends garbage instead of a valid 32-byte locator token
+    client_send
+        .write_all(&[0xde, 0xad, 0xbe, 0xef])
+        .await
+        .unwrap();
+    client_send.finish().unwrap();
+
+    let server_res = server.await.unwrap();
+    assert!(matches!(
+        server_res,
+        Err(pake::HandshakeError::InvalidIntent)
+    ));
+    let _ = client_recv.read_to_end(100).await;
+}
+
+#[tokio::test]
+async fn handshake_distinguishes_wrong_locator_from_wrong_password() {
+    // 1. Wrong locator -> InvalidIntent
+    {
+        let (sc, cc) = connections().await;
+        let server_code: PairingCode = "12345678-amber-river-moss-lunar".parse().unwrap();
+        let client_code: PairingCode = "87654321-amber-river-moss-lunar".parse().unwrap();
+        let sb = channel_binding(&sc).unwrap();
+        let cb = channel_binding(&cc).unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut s, mut r) = sc.accept_bi().await.unwrap();
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                pake::sender_handshake(server_code.expose(), &mut s, &mut r, &sb),
+            )
+            .await
+        });
+
+        let (mut s, mut r) = cc.open_bi().await.unwrap();
+        let client = tokio::time::timeout(
+            Duration::from_secs(2),
+            pake::receiver_handshake(client_code.expose(), &mut s, &mut r, &cb),
+        );
+        let (client_res, server_res) = tokio::join!(client, server);
+        assert!(client_res.is_ok());
+        let server_res = server_res.unwrap();
+        assert!(matches!(
+            server_res,
+            Ok(Err(pake::HandshakeError::InvalidIntent))
+        ));
+        cc.close(0u32.into(), b"done");
+    }
+
+    // 2. Matching locator, wrong words -> AuthFailed
+    {
+        let (sc, cc) = connections().await;
+        let server_code: PairingCode = "12345678-amber-river-moss-lunar".parse().unwrap();
+        let client_code: PairingCode = "12345678-tiger-river-moss-lunar".parse().unwrap();
+        let sb = channel_binding(&sc).unwrap();
+        let cb = channel_binding(&cc).unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut s, mut r) = sc.accept_bi().await.unwrap();
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                pake::sender_handshake(server_code.expose(), &mut s, &mut r, &sb),
+            )
+            .await
+        });
+
+        let (mut s, mut r) = cc.open_bi().await.unwrap();
+        let client = tokio::time::timeout(
+            Duration::from_secs(2),
+            pake::receiver_handshake(client_code.expose(), &mut s, &mut r, &cb),
+        );
+        let (client_res, server_res) = tokio::join!(client, server);
+        assert!(matches!(
+            client_res,
+            Ok(Err(pake::HandshakeError::AuthFailed))
+        ));
+        let server_res = server_res.unwrap();
+        assert!(matches!(
+            server_res,
+            Ok(Err(pake::HandshakeError::AuthFailed))
+        ));
+        cc.close(0u32.into(), b"done");
+    }
+
+    // 3. Matching locator, matching words -> Ok
+    {
+        let (sc, cc) = connections().await;
+        let code: PairingCode = "12345678-amber-river-moss-lunar".parse().unwrap();
+        let sb = channel_binding(&sc).unwrap();
+        let cb = channel_binding(&cc).unwrap();
+
+        let code_clone = code.clone();
+        let server = tokio::spawn(async move {
+            let (mut s, mut r) = sc.accept_bi().await.unwrap();
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                pake::sender_handshake(code_clone.expose(), &mut s, &mut r, &sb),
+            )
+            .await
+        });
+
+        let (mut s, mut r) = cc.open_bi().await.unwrap();
+        let (client_res, server_res) = tokio::join!(
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                pake::receiver_handshake(code.expose(), &mut s, &mut r, &cb),
+            ),
+            server
+        );
+        assert!(matches!(client_res, Ok(Ok(()))));
+        assert!(matches!(server_res.unwrap(), Ok(Ok(()))));
+        cc.close(0u32.into(), b"done");
+    }
+}
+
+#[tokio::test]
+async fn withheld_client_confirmation_counts_as_auth_failure() {
+    let (sc, cc) = connections().await;
+    let code: PairingCode = "12345678-amber-river-moss-lunar".parse().unwrap();
+    let sb = channel_binding(&sc).unwrap();
+    let cb = channel_binding(&cc).unwrap();
+
+    let code_clone = code.clone();
+    let server = tokio::spawn(async move {
+        let (mut s, mut r) = sc.accept_bi().await.unwrap();
+        pake::sender_handshake(code_clone.expose(), &mut s, &mut r, &sb).await
+    });
+
+    let (mut client_send, mut client_recv) = cc.open_bi().await.unwrap();
+
+    // 1. Send valid intent token
+    let token = pake::locator_token("12345678", &cb);
+    client_send.write_all(&token).await.unwrap();
+
+    // 2. Send valid SPAKE2 msg_b
+    let (_state, msg_b) = spake2::Spake2::<spake2::Ed25519Group>::start_b(
+        &spake2::Password::new(code.expose().as_bytes()),
+        &spake2::Identity::new(b"wisp-v2-sender"),
+        &spake2::Identity::new(b"wisp-v2-receiver"),
+    );
+    let len = u8::try_from(msg_b.len()).unwrap();
+    client_send.write_all(&[len]).await.unwrap();
+    client_send.write_all(&msg_b).await.unwrap();
+
+    // 3. Read server's msg_a
+    let mut len_buf = [0u8; 1];
+    client_recv.read_exact(&mut len_buf).await.unwrap();
+    let mut msg_a = vec![0u8; len_buf[0] as usize];
+    client_recv.read_exact(&mut msg_a).await.unwrap();
+
+    // 4. Read server's confirm:a MAC
+    let mut server_confirm = [0u8; 32];
+    client_recv.read_exact(&mut server_confirm).await.unwrap();
+
+    // Attacker now has server_confirm and can check offline if its password guess was right!
+    // Attacker maliciously closes/drops the stream without sending confirm:b.
+    client_send.finish().unwrap();
+
+    // Server MUST report AuthFailed, not Protocol or silent timeout bypass!
+    let server_res = tokio::time::timeout(Duration::from_secs(6), server)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(server_res, Err(pake::HandshakeError::AuthFailed)),
+        "expected AuthFailed when client withholds confirmation, got: {server_res:?}"
+    );
+
+    cc.close(0u32.into(), b"done");
 }

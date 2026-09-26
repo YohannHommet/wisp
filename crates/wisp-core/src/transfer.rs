@@ -482,8 +482,8 @@ pub async fn send_file(options: SendOptions, events: EventHandler) -> Result<Tra
         is_directory: source.is_directory(),
     });
 
-    const MAX_PRE_AUTH_RETRIES: usize = 3;
-    let mut pre_auth_retries = 0;
+    const MAX_AUTH_ATTEMPTS: usize = 3;
+    let mut auth_failures = 0;
     let deadline = Instant::now() + Duration::from_secs(options.timeouts.wait);
 
     let (conn, mut send, mut recv) = loop {
@@ -512,15 +512,10 @@ pub async fn send_file(options: SendOptions, events: EventHandler) -> Result<Tra
             }
         };
 
-        let conn = match tokio::time::timeout(Duration::from_secs(options.timeouts.pake), incoming)
-            .await
-        {
+        // Bounded so empty or stalled transport handshakes do not block legitimate receivers.
+        let conn = match tokio::time::timeout(Duration::from_secs(5), incoming).await {
             Ok(Ok(conn)) => conn,
             Ok(Err(err)) => {
-                pre_auth_retries += 1;
-                if pre_auth_retries >= MAX_PRE_AUTH_RETRIES {
-                    bail!("connection handshake failed: {err:#}; exceeded pre-auth retry limit");
-                }
                 events(Event::Warning {
                     message: format!(
                         "connection handshake failed before authentication ({err:#}); waiting for receiver"
@@ -529,10 +524,6 @@ pub async fn send_file(options: SendOptions, events: EventHandler) -> Result<Tra
                 continue;
             }
             Err(_) => {
-                pre_auth_retries += 1;
-                if pre_auth_retries >= MAX_PRE_AUTH_RETRIES {
-                    bail!("connection handshake timed out; exceeded pre-auth retry limit");
-                }
                 events(Event::Warning {
                     message:
                         "connection handshake timed out before authentication; waiting for receiver"
@@ -542,44 +533,117 @@ pub async fn send_file(options: SendOptions, events: EventHandler) -> Result<Tra
             }
         };
 
-        match tokio::time::timeout(Duration::from_secs(options.timeouts.pake), conn.accept_bi())
+        // Bounded so empty probes or network scanners that never open a stream are rejected without aborting the session.
+        let (mut s, mut r) = match tokio::time::timeout(Duration::from_secs(5), conn.accept_bi())
             .await
         {
-            Ok(Ok((send, recv))) => break (conn, send, recv),
+            Ok(Ok((send, recv))) => (send, recv),
             Ok(Err(err)) => {
-                pre_auth_retries += 1;
-                if pre_auth_retries >= MAX_PRE_AUTH_RETRIES {
-                    bail!("receiver did not open a stream: {err:#}; exceeded pre-auth retry limit");
-                }
                 events(Event::Warning {
                     message: format!(
                         "receiver disconnected before opening a stream ({err:#}); waiting for receiver"
                     ),
                 });
+                conn.close(0u32.into(), b"stream failed");
                 continue;
             }
             Err(_) => {
-                pre_auth_retries += 1;
-                if pre_auth_retries >= MAX_PRE_AUTH_RETRIES {
-                    bail!("receiver stream opening timed out; exceeded pre-auth retry limit");
-                }
                 events(Event::Warning {
                     message: "receiver stream opening timed out; waiting for receiver".into(),
                 });
+                conn.close(0u32.into(), b"stream timeout");
+                continue;
+            }
+        };
+
+        let binding = match channel_binding(&conn) {
+            Ok(b) => b,
+            Err(err) => {
+                conn.close(0u32.into(), b"tls binding error");
+                return Err(err);
+            }
+        };
+
+        events(Event::Authenticating);
+        let auth_res = tokio::time::timeout(
+            Duration::from_secs(options.timeouts.pake),
+            pake::sender_handshake(code.expose(), &mut s, &mut r, &binding),
+        )
+        .await;
+
+        match auth_res {
+            Ok(Ok(())) => {
+                // Legitimate receiver authenticated successfully. Stop mDNS advertisement.
+                drop(advert);
+                break (conn, s, r);
+            }
+            Ok(Err(pake::HandshakeError::InvalidIntent)) => {
+                // Spurious network probe, port scanner, or wrong session locator.
+                // Do NOT count against password attempts budget or drop advertisement.
+                events(Event::Warning {
+                    message:
+                        "spurious network probe or unauthorized connection rejected; waiting for receiver"
+                            .into(),
+                });
+                conn.close(0u32.into(), b"invalid intent");
+                continue;
+            }
+            Ok(Err(pake::HandshakeError::AuthFailed)) => {
+                auth_failures += 1;
+                events(Event::Warning {
+                    message: format!(
+                        "authentication attempt {auth_failures}/{MAX_AUTH_ATTEMPTS} failed (wrong pairing code); waiting for retry"
+                    ),
+                });
+                conn.close(0u32.into(), b"auth failed");
+                // Mandatory 1-second delay to defeat rapid brute-forcing
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                if auth_failures >= MAX_AUTH_ATTEMPTS {
+                    drop(advert);
+                    bail!(
+                        "authentication failed: exceeded maximum pairing attempts ({MAX_AUTH_ATTEMPTS}/{MAX_AUTH_ATTEMPTS}); pairing code burned"
+                    );
+                }
+                continue;
+            }
+            Ok(Err(pake::HandshakeError::Protocol(msg))) => {
+                events(Event::Warning {
+                    message: format!("handshake protocol error: {msg}; waiting for receiver"),
+                });
+                conn.close(0u32.into(), b"protocol error");
+                continue;
+            }
+            Ok(Err(pake::HandshakeError::Io(err))) => {
+                events(Event::Warning {
+                    message: format!("I/O error during handshake: {err}; waiting for receiver"),
+                });
+                conn.close(0u32.into(), b"io error");
+                continue;
+            }
+            Err(_) => {
+                auth_failures += 1;
+                events(Event::Warning {
+                    message: format!(
+                        "authentication timed out (attempt {auth_failures}/{MAX_AUTH_ATTEMPTS}); waiting for retry"
+                    ),
+                });
+                conn.close(0u32.into(), b"auth timeout");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                if auth_failures >= MAX_AUTH_ATTEMPTS {
+                    drop(advert);
+                    bail!(
+                        "authentication failed: exceeded maximum pairing attempts ({MAX_AUTH_ATTEMPTS}/{MAX_AUTH_ATTEMPTS}); pairing code burned"
+                    );
+                }
                 continue;
             }
         }
     };
 
-    // One attempt per code once authentication begins; no guess-retry oracle.
-    drop(advert);
-    let binding = channel_binding(&conn)?;
     let result = sender_protocol(
-        &code,
         &mut source,
         &mut send,
         &mut recv,
-        &binding,
         &options.timeouts,
         &events,
     )
@@ -699,22 +763,12 @@ fn channel_binding(conn: &quinn::Connection) -> Result<[u8; 32]> {
 }
 
 async fn sender_protocol(
-    code: &PairingCode,
     source: &mut PreparedSource,
     send: &mut SendStream,
     recv: &mut RecvStream,
-    binding: &[u8; 32],
     timeouts: &Timeouts,
     events: &EventHandler,
 ) -> Result<TransferReceipt> {
-    events(Event::Authenticating);
-    tokio::time::timeout(
-        Duration::from_secs(timeouts.pake),
-        pake::sender_handshake(code.expose(), send, recv, binding),
-    )
-    .await
-    .context("authentication timed out; start a new transfer")?
-    .context("authentication failed; check the code and start a new transfer")?;
     let mut ready = [0; 3];
     tokio::time::timeout(timeouts.io(), recv.read_exact(&mut ready))
         .await

@@ -21,9 +21,9 @@ use tokio::{
     io::{AsyncReadExt, AsyncSeekExt},
 };
 
-const CHUNK: usize = 64 * 1024;
+const CHUNK: usize = 512 * 1024;
 // Amortize Tokio's blocking-file handoff while keeping preparation memory bounded.
-const HASH_CHUNK: usize = 256 * 1024;
+const HASH_CHUNK: usize = 1024 * 1024;
 const MAX_FRAME: usize = 64 * 1024;
 pub const MAX_FILE_SIZE: u64 = 1 << 40;
 // Minimum bytes transferred per io timeout window to mitigate Slowloris resource exhaustion.
@@ -1228,7 +1228,6 @@ async fn receiver_file_protocol(
         }
         resumable.write(&chunk.bytes)?;
         received += chunk.bytes.len() as u64;
-        progress.update(received);
 
         if options.resume {
             let aligned_checkpoint = (received / CHECKPOINT_INTERVAL) * CHECKPOINT_INTERVAL;
@@ -1238,6 +1237,8 @@ async fn receiver_file_protocol(
                 progress.force_update(received);
             }
         }
+
+        progress.update(received);
 
         let elapsed = window_start.elapsed();
         if elapsed >= options.timeouts.io() {

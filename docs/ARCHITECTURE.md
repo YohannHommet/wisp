@@ -26,7 +26,7 @@ Source reads and hashing use Tokio file I/O on the same open handle. Destination
 ## WSP wire sequence
 
 1. QUIC handshake with ALPN `wsp/2`.
-2. SPAKE2 mutual key confirmation bound to the TLS exporter.
+2. Receiver presents 32-byte `locator_token` proof of intent bound to the TLS exporter. If valid, peers execute SPAKE2 mutual key confirmation with directional role-bound MACs.
 3. Receiver sends `GET` to initiate the session stream.
 4. Sender writes big-endian u32 length-prefixed `FileMeta`.
 5. Negotiation & streaming:
@@ -36,7 +36,7 @@ Source reads and hashing use Tokio file I/O on the same open handle. Destination
 7. Receiver writes a length-prefixed `VerifiedReceipt`, then FIN.
 8. Sender validates receipt and FIN. Receiver waits for transport acknowledgement; connections close cleanly.
 
-Every network stage is bounded. The one-attempt policy is deliberate: automatic retries with the same short password would enlarge the online guessing budget. Retry at the user level creates a new session and code.
+Every network stage is bounded. The 3-attempt budget policy with 1.0s delay balances human typo recovery with strict online guess resistance ($P \approx 1.45 \times 10^{-8}$). Spurious network probes without valid session intent are rejected as `InvalidIntent` without consuming guess attempts.
 
 If a file is saved but acknowledgement is lost, local success and remote uncertainty are both represented honestly. A distributed protocol cannot eliminate every ambiguity caused by disconnection.
 
@@ -45,6 +45,7 @@ If a file is saved but acknowledgement is lost, local success and remote uncerta
 Detailed architectural choices, protocol specifications, and storage durability guarantees are documented in [`docs/adr/`](adr/README.md):
 - [ADR-0001: In-Flight Directory Streaming Architecture](adr/0001-in-flight-directory-streaming.md)
 - [ADR-0002: Transfer Resumption and Periodic Checkpointing](adr/0002-transfer-resumption-and-checkpointing.md)
+- [ADR-0003: LAN PAKE DoS Mitigation and Bounded Authentication Budget](adr/0003-lan-pake-dos-mitigation-and-bounded-auth-budget.md)
 
 ## Scope decisions
 

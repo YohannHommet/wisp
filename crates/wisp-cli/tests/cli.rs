@@ -468,7 +468,7 @@ fn cli_transfer_resumption_after_sigint() {
     let source = tempfile::tempdir().unwrap();
     let destination = tempfile::tempdir().unwrap();
     let file = source.path().join("resumable_cli.bin");
-    let payload: Vec<u8> = (0..(48 * 1024 * 1024)).map(|i| (i % 251) as u8).collect();
+    let payload: Vec<u8> = vec![0x5a; 256 * 1024 * 1024];
     std::fs::write(&file, &payload).unwrap();
 
     let sender1 = Process::start(&[
@@ -518,18 +518,28 @@ fn cli_transfer_resumption_after_sigint() {
     assert_eq!(status.code(), Some(130));
 
     let mut part_found = false;
-    let mut resume_found = false;
+    let mut recorded_checkpoint = 0u64;
     for entry in std::fs::read_dir(destination.path()).unwrap().flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with(".wisp-") && name.ends_with(".part") {
             part_found = true;
         }
         if name.starts_with(".wisp-") && name.ends_with(".resume") {
-            resume_found = true;
+            let content = std::fs::read_to_string(entry.path()).unwrap();
+            let ledger: serde_json::Value = serde_json::from_str(&content).unwrap();
+            recorded_checkpoint = ledger["checkpoint_offset"].as_u64().unwrap();
         }
     }
     assert!(part_found, "partial file must exist after SIGINT");
-    assert!(resume_found, "resume ledger must exist after SIGINT");
+    assert!(
+        recorded_checkpoint >= 16 * 1024 * 1024,
+        "checkpoint offset {recorded_checkpoint} must have reached at least 16 MiB"
+    );
+    assert_eq!(
+        recorded_checkpoint % (16 * 1024 * 1024),
+        0,
+        "checkpoint offset {recorded_checkpoint} must be aligned to 16 MiB boundary"
+    );
 
     let mut sender2 = Process::start(&[
         "send",
@@ -554,7 +564,7 @@ fn cli_transfer_resumption_after_sigint() {
     ]);
 
     let resuming_ev = receiver2.event("resuming");
-    assert_eq!(resuming_ev["offset"], 16 * 1024 * 1024);
+    assert_eq!(resuming_ev["offset"], recorded_checkpoint);
 
     let (recv_status, recv_events) = receiver2.finish();
     let (send_status, _) = sender2.finish();

@@ -21,12 +21,12 @@ Callbacks must be fast. `Ready` contains the code, so event streams must not be 
 
 Dropping a transfer future closes its endpoint and withdraws discovery. The CLI handles signals with `tokio::select!` and returns an exit status only after the transfer future has dropped. It does not call `process::exit` in the transfer path. Discovery does not use uncancellable `spawn_blocking` waits: bounded batches of mDNS events are polled asynchronously.
 
-Source reads and hashing use Tokio file I/O on the same open handle. Destination writes are buffered synchronous writes, bounded by received chunks, so temporary-file ownership and cleanup are deterministic across cancellation. Flush, file sync and publication are synchronous; slow local filesystems can delay cancellation during those operations. No detached task is allowed to publish a file after the transfer future has been cancelled.
+Source reads and hashing use Tokio file I/O on the same open handle, employing an asynchronous double-buffered ping-pong pipelined reader (512 KiB chunks, 1024 KiB preparation hashing buffer) that overlaps disk I/O with QUIC network transmission. Destination writes are buffered synchronous writes, bounded by received chunks, so temporary-file ownership and cleanup are deterministic across cancellation. Flush, file sync and publication are synchronous; slow local filesystems can delay cancellation during those operations. No detached task is allowed to publish a file after the transfer future has been cancelled.
 
 ## WSP wire sequence
 
 1. QUIC handshake with ALPN `wsp/2`.
-2. SPAKE2 mutual key confirmation bound to the TLS exporter.
+2. Receiver presents 32-byte `locator_token` proof of intent bound to the TLS exporter. If valid, peers execute SPAKE2 mutual key confirmation with directional role-bound MACs.
 3. Receiver sends `GET` to initiate the session stream.
 4. Sender writes big-endian u32 length-prefixed `FileMeta`.
 5. Negotiation & streaming:
@@ -36,7 +36,7 @@ Source reads and hashing use Tokio file I/O on the same open handle. Destination
 7. Receiver writes a length-prefixed `VerifiedReceipt`, then FIN.
 8. Sender validates receipt and FIN. Receiver waits for transport acknowledgement; connections close cleanly.
 
-Every network stage is bounded. The one-attempt policy is deliberate: automatic retries with the same short password would enlarge the online guessing budget. Retry at the user level creates a new session and code.
+Every network stage is bounded. The 3-attempt budget policy with 1.0s delay balances human typo recovery with strict online guess resistance ($P \approx 1.45 \times 10^{-8}$). Spurious network probes without valid session intent are rejected as `InvalidIntent` without consuming guess attempts.
 
 If a file is saved but acknowledgement is lost, local success and remote uncertainty are both represented honestly. A distributed protocol cannot eliminate every ambiguity caused by disconnection.
 
@@ -45,6 +45,8 @@ If a file is saved but acknowledgement is lost, local success and remote uncerta
 Detailed architectural choices, protocol specifications, and storage durability guarantees are documented in [`docs/adr/`](adr/README.md):
 - [ADR-0001: In-Flight Directory Streaming Architecture](adr/0001-in-flight-directory-streaming.md)
 - [ADR-0002: Transfer Resumption and Periodic Checkpointing](adr/0002-transfer-resumption-and-checkpointing.md)
+- [ADR-0003: LAN PAKE DoS Mitigation and Bounded Authentication Budget](adr/0003-lan-pake-dos-mitigation-and-bounded-auth-budget.md)
+- [ADR-0004: High-Throughput I/O Tuning and Double-Buffered Pipelining](adr/0004-high-throughput-io-tuning-and-pipelining.md)
 
 ## Scope decisions
 

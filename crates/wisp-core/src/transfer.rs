@@ -862,45 +862,101 @@ async fn sender_file_protocol(
     }
 
     let mut progress = Progress::new(start_offset, source.meta.size, events);
-    let mut buf = vec![0; CHUNK];
     let mut sent = start_offset;
     progress.update(sent);
     let mut hash = blake3::Hasher::new();
     let mut window_start = Instant::now();
     let mut window_start_sent = start_offset;
-    while sent < source.meta.size {
-        let to_read = ((source.meta.size - sent).min(CHUNK as u64)) as usize;
-        let n = source
-            .file
-            .read(&mut buf[..to_read])
-            .await
-            .context("reading source file")?;
-        if n == 0 {
-            break;
-        }
-        if sent + n as u64 > source.meta.size {
-            bail!("source file grew during transfer; receiver must retry");
-        }
-        if start_offset == 0 {
-            hash.update(&buf[..n]);
-        }
-        tokio::time::timeout(timeouts.io(), send.write_all(&buf[..n]))
-            .await
-            .context("sending stalled")??;
-        sent += n as u64;
-        progress.update(sent);
 
-        let elapsed = window_start.elapsed();
-        if elapsed >= timeouts.io() {
-            let bytes_in_window = sent - window_start_sent;
-            let remaining_expected = source.meta.size - window_start_sent;
-            let min_required = MIN_THROUGHPUT_PER_WINDOW.min(remaining_expected);
-            if bytes_in_window < min_required && sent < source.meta.size {
-                bail!("transfer rate too slow; aborted to prevent connection starvation");
+    let total_remaining = source.meta.size - start_offset;
+    if total_remaining <= CHUNK as u64 {
+        if total_remaining > 0 {
+            let mut buf = vec![0u8; total_remaining as usize];
+            source
+                .file
+                .read_exact(&mut buf)
+                .await
+                .context("reading source file")?;
+            if start_offset == 0 {
+                hash.update(&buf);
             }
-            window_start = Instant::now();
-            window_start_sent = sent;
+            tokio::time::timeout(timeouts.io(), send.write_all(&buf))
+                .await
+                .context("sending stalled")??;
+            sent += total_remaining;
+            progress.update(sent);
         }
+    } else {
+        let (free_tx, free_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(2);
+        let (data_tx, mut data_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(2);
+
+        free_tx
+            .send(vec![0u8; CHUNK])
+            .await
+            .map_err(|_| anyhow!("channel initialization failed"))?;
+        free_tx
+            .send(vec![0u8; CHUNK])
+            .await
+            .map_err(|_| anyhow!("channel initialization failed"))?;
+
+        let expected_size = source.meta.size;
+        let file = &mut source.file;
+
+        let mut free_rx = free_rx;
+        let reader = async move {
+            let mut read_bytes = start_offset;
+            while read_bytes < expected_size {
+                let Some(mut buf) = free_rx.recv().await else {
+                    break;
+                };
+                let to_read = ((expected_size - read_bytes).min(CHUNK as u64)) as usize;
+                let n = file
+                    .read(&mut buf[..to_read])
+                    .await
+                    .context("reading source file")?;
+                if n == 0 {
+                    return Err(anyhow!("source file truncated during transfer"));
+                }
+                read_bytes += n as u64;
+                buf.truncate(n);
+                if data_tx.send(buf).await.is_err() {
+                    break;
+                }
+            }
+            Ok(())
+        };
+
+        let writer = async {
+            while let Some(mut buf) = data_rx.recv().await {
+                let n = buf.len();
+                if start_offset == 0 {
+                    hash.update(&buf);
+                }
+                tokio::time::timeout(timeouts.io(), send.write_all(&buf))
+                    .await
+                    .context("sending stalled")??;
+                sent += n as u64;
+                progress.update(sent);
+
+                let elapsed = window_start.elapsed();
+                if elapsed >= timeouts.io() {
+                    let bytes_in_window = sent - window_start_sent;
+                    let remaining_expected = expected_size - window_start_sent;
+                    let min_required = MIN_THROUGHPUT_PER_WINDOW.min(remaining_expected);
+                    if bytes_in_window < min_required && sent < expected_size {
+                        bail!("transfer rate too slow; aborted to prevent connection starvation");
+                    }
+                    window_start = Instant::now();
+                    window_start_sent = sent;
+                }
+
+                buf.resize(CHUNK, 0);
+                let _ = free_tx.send(buf).await;
+            }
+            Ok(())
+        };
+
+        tokio::try_join!(reader, writer)?;
     }
     if sent != source.meta.size {
         bail!("source file changed during transfer; receiver must retry");
@@ -1013,36 +1069,100 @@ async fn sender_dir_protocol(
 
                 let mut file_hasher = blake3::Hasher::new();
                 let mut file_sent = 0u64;
-                while file_sent < *size {
-                    let to_read = ((*size - file_sent).min(CHUNK as u64)) as usize;
-                    let n = file
-                        .read(&mut buf[..to_read])
-                        .await
-                        .context("reading file chunk")?;
-                    if n == 0 {
-                        bail!("source file {} truncated unexpectedly", abs_path.display());
+                if *size <= CHUNK as u64 {
+                    if *size > 0 {
+                        let to_read = *size as usize;
+                        file.read_exact(&mut buf[..to_read])
+                            .await
+                            .context("reading file chunk")?;
+                        file_hasher.update(&buf[..to_read]);
+                        tokio::time::timeout(timeouts.io(), send.write_all(&buf[..to_read]))
+                            .await
+                            .context("sending stalled")??;
+                        file_sent += to_read as u64;
+                        sent += to_read as u64;
+                        progress.update(sent);
                     }
-                    file_hasher.update(&buf[..n]);
-                    tokio::time::timeout(timeouts.io(), send.write_all(&buf[..n]))
-                        .await
-                        .context("sending stalled")??;
-                    file_sent += n as u64;
-                    sent += n as u64;
-                    progress.update(sent);
+                } else {
+                    let (free_tx, free_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(2);
+                    let (data_tx, mut data_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(2);
 
-                    let elapsed = window_start.elapsed();
-                    if elapsed >= timeouts.io() {
-                        let bytes_in_window = sent - window_start_sent;
-                        let remaining_expected = dir.total_size - window_start_sent;
-                        let min_required = MIN_THROUGHPUT_PER_WINDOW.min(remaining_expected);
-                        if bytes_in_window < min_required && sent < dir.total_size {
-                            bail!(
-                                "transfer rate too slow; aborted to prevent connection starvation"
-                            );
+                    free_tx
+                        .send(vec![0u8; CHUNK])
+                        .await
+                        .map_err(|_| anyhow!("channel initialization failed"))?;
+                    free_tx
+                        .send(vec![0u8; CHUNK])
+                        .await
+                        .map_err(|_| anyhow!("channel initialization failed"))?;
+
+                    let expected_file_size = *size;
+                    let file_ref = &mut file;
+                    let file_display = abs_path.display().to_string();
+
+                    let mut free_rx = free_rx;
+                    let reader = async move {
+                        let mut read_bytes = 0u64;
+                        while read_bytes < expected_file_size {
+                            let Some(mut chunk_buf) = free_rx.recv().await else {
+                                break;
+                            };
+                            let to_read =
+                                ((expected_file_size - read_bytes).min(CHUNK as u64)) as usize;
+                            let n = file_ref
+                                .read(&mut chunk_buf[..to_read])
+                                .await
+                                .context("reading file chunk")?;
+                            if n == 0 {
+                                return Err(anyhow!(
+                                    "source file {file_display} truncated unexpectedly"
+                                ));
+                            }
+                            read_bytes += n as u64;
+                            chunk_buf.truncate(n);
+                            if data_tx.send(chunk_buf).await.is_err() {
+                                break;
+                            }
                         }
-                        window_start = Instant::now();
-                        window_start_sent = sent;
-                    }
+                        Ok(())
+                    };
+
+                    let writer = async {
+                        while let Some(mut chunk_buf) = data_rx.recv().await {
+                            let n = chunk_buf.len();
+                            file_hasher.update(&chunk_buf);
+                            tokio::time::timeout(timeouts.io(), send.write_all(&chunk_buf))
+                                .await
+                                .context("sending stalled")??;
+                            file_sent += n as u64;
+                            sent += n as u64;
+                            progress.update(sent);
+
+                            let elapsed = window_start.elapsed();
+                            if elapsed >= timeouts.io() {
+                                let bytes_in_window = sent - window_start_sent;
+                                let remaining_expected = dir.total_size - window_start_sent;
+                                let min_required =
+                                    MIN_THROUGHPUT_PER_WINDOW.min(remaining_expected);
+                                if bytes_in_window < min_required && sent < dir.total_size {
+                                    bail!(
+                                        "transfer rate too slow; aborted to prevent connection starvation"
+                                    );
+                                }
+                                window_start = Instant::now();
+                                window_start_sent = sent;
+                            }
+
+                            chunk_buf.resize(CHUNK, 0);
+                            let _ = free_tx.send(chunk_buf).await;
+                        }
+                        Ok(())
+                    };
+
+                    tokio::try_join!(reader, writer)?;
+                }
+                if file_sent != *size {
+                    bail!("source file {} truncated unexpectedly", abs_path.display());
                 }
 
                 let file_hash = file_hasher.finalize().to_hex().to_string();

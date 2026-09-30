@@ -468,7 +468,7 @@ fn cli_transfer_resumption_after_sigint() {
     let source = tempfile::tempdir().unwrap();
     let destination = tempfile::tempdir().unwrap();
     let file = source.path().join("resumable_cli.bin");
-    let payload: Vec<u8> = (0..(160 * 1024 * 1024)).map(|i| (i % 251) as u8).collect();
+    let payload: Vec<u8> = vec![0x5a; 256 * 1024 * 1024];
     std::fs::write(&file, &payload).unwrap();
 
     let sender1 = Process::start(&[

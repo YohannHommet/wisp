@@ -21,7 +21,7 @@ Callbacks must be fast. `Ready` contains the code, so event streams must not be 
 
 Dropping a transfer future closes its endpoint and withdraws discovery. The CLI handles signals with `tokio::select!` and returns an exit status only after the transfer future has dropped. It does not call `process::exit` in the transfer path. Discovery does not use uncancellable `spawn_blocking` waits: bounded batches of mDNS events are polled asynchronously.
 
-Source reads and hashing use Tokio file I/O on the same open handle. Destination writes are buffered synchronous writes, bounded by received chunks, so temporary-file ownership and cleanup are deterministic across cancellation. Flush, file sync and publication are synchronous; slow local filesystems can delay cancellation during those operations. No detached task is allowed to publish a file after the transfer future has been cancelled.
+Source reads and hashing use Tokio file I/O on the same open handle, employing an asynchronous double-buffered ping-pong pipelined reader (512 KiB chunks, 1024 KiB preparation hashing buffer) that overlaps disk I/O with QUIC network transmission. Destination writes are buffered synchronous writes, bounded by received chunks, so temporary-file ownership and cleanup are deterministic across cancellation. Flush, file sync and publication are synchronous; slow local filesystems can delay cancellation during those operations. No detached task is allowed to publish a file after the transfer future has been cancelled.
 
 ## WSP wire sequence
 
@@ -46,6 +46,7 @@ Detailed architectural choices, protocol specifications, and storage durability 
 - [ADR-0001: In-Flight Directory Streaming Architecture](adr/0001-in-flight-directory-streaming.md)
 - [ADR-0002: Transfer Resumption and Periodic Checkpointing](adr/0002-transfer-resumption-and-checkpointing.md)
 - [ADR-0003: LAN PAKE DoS Mitigation and Bounded Authentication Budget](adr/0003-lan-pake-dos-mitigation-and-bounded-auth-budget.md)
+- [ADR-0004: High-Throughput I/O Tuning and Double-Buffered Pipelining](adr/0004-high-throughput-io-tuning-and-pipelining.md)
 
 ## Scope decisions
 
